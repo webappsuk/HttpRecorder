@@ -38,7 +38,7 @@ namespace WebApplications.HttpRecorder.KeyGenerators
             string name = generator.Name;
             if (string.IsNullOrEmpty(name))
                 throw new ArgumentOutOfRangeException(nameof(generator),
-                    $"The generator name must not be null or empty.");
+                    "The generator name must not be null or empty.");
             if (name[0] == BuiltinPrefixChar)
                 throw new ArgumentOutOfRangeException(nameof(generator),
                     $"The generator name '{name}' cannot start with '{BuiltinPrefixChar}' as it is reserved for built-in key generators.");

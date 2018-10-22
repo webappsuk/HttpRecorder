@@ -7,27 +7,31 @@ using System.Net.Http;
 
 namespace WebApplications.HttpRecorder.Serialization
 {
-    internal class KeyFormatter : IMessagePackFormatter<HttpRequestMessage>
+    internal class RequestPartsFormatter : IMessagePackFormatter<HttpRequestMessage>
     {
+        public readonly RequestParts Parts;
         private readonly IReadOnlyList<RequestPart> _parts;
 
-        public KeyFormatter(RequestParts requestParts)
+        public RequestPartsFormatter(RequestParts requestParts)
         {
+            Parts = requestParts;
             _parts = requestParts.GetParts().ToArray();
         }
 
         /// <inheritdoc />
         public int Serialize(ref byte[] bytes, int offset, HttpRequestMessage request, IFormatterResolver formatterResolver)
         {
-            if (request == null)
-            {
+            if (request is null)
                 return MessagePackBinary.WriteNil(ref bytes, offset);
-            }
 
             int startOffset = offset;
 
             Uri uri = request.RequestUri;
-            offset += MessagePackBinary.WriteFixedArrayHeaderUnsafe(ref bytes, offset, _parts.Count);
+            offset += MessagePackBinary.WriteFixedArrayHeaderUnsafe(ref bytes, offset, _parts.Count + 1);
+
+            // Add the parts into the key output, to further mangle the hash and prevent collisions.
+            offset += MessagePackBinary.WriteUInt16(ref bytes, offset, (ushort)Parts);
+
             foreach (RequestPart part in _parts)
             {
                 switch (part)
@@ -55,11 +59,11 @@ namespace WebApplications.HttpRecorder.Serialization
                         offset += MessagePackBinary.WriteUInt16(ref bytes, offset, (ushort)port);
                         break;
                     case RequestPart.UriPath:
-                        // Strip the preceeding '/' from path.
+                        // Strip the preceding '/' from path.
                         offset += MessagePackBinary.WriteString(ref bytes, offset, uri.AbsolutePath.Substring(1));
                         break;
                     case RequestPart.UriQuery:
-                        // Strip the preceeding '?' from path.
+                        // Strip the preceding '?' from path.
                         offset += MessagePackBinary.WriteString(ref bytes, offset, uri.Query.Substring(1));
                         break;
                     case RequestPart.Method:
@@ -99,8 +103,9 @@ namespace WebApplications.HttpRecorder.Serialization
         /// <inheritdoc />
         public HttpRequestMessage Deserialize(byte[] bytes, int offset, IFormatterResolver formatterResolver, out int readSize)
         {
-            // We don't support deserialization as we don't have all the parts needed to create a HttpRequestMessage
-            throw new InvalidOperationException("Cannot deserialize a HttpRequest key.");
+            // We don't support deserialization as we don't have all the parts needed to create a HttpRequestMessage and we
+            // ultimately hash this anyway!
+            throw new InvalidOperationException("Cannot deserialize a HttpRequest key using a RequestParts formatter!");
         }
     }
 }

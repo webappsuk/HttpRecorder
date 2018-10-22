@@ -16,7 +16,7 @@ namespace WebApplications.HttpRecorder.Logging
             StringBuilder builder = new StringBuilder(level.ToString());
             builder.Append(": ");
             if (string.IsNullOrWhiteSpace(message))
-                builder.Append(exception == null ? "Empty log message!" : exception.Message);
+                builder.Append(exception is null ? "Empty log message!" : exception.Message);
             else
             {
                 builder.Append(message);

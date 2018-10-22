@@ -41,12 +41,20 @@ namespace WebApplications.HttpRecorder.Serialization
         }
 
         /// <inheritdoc />
-        public int Serialize(ref byte[] bytes, int offset, HttpMethod value, IFormatterResolver formatterResolver)
-            => MessagePackBinary.WriteString(ref bytes, offset, value?.Method);
+        public int Serialize(ref byte[] bytes, int offset, HttpMethod method, IFormatterResolver formatterResolver)
+            => method is null
+                ? MessagePackBinary.WriteNil(ref bytes, offset)
+                : MessagePackBinary.WriteString(ref bytes, offset, method.Method);
 
         /// <inheritdoc />
         public HttpMethod Deserialize(byte[] bytes, int offset, IFormatterResolver formatterResolver, out int readSize)
         {
+            if (MessagePackBinary.IsNil(bytes, offset))
+            {
+                readSize = 1;
+                return null;
+            }
+
             string name = MessagePackBinary.ReadString(bytes, offset, out readSize);
             if (string.IsNullOrEmpty(name)) return null;
 

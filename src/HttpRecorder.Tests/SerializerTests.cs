@@ -46,10 +46,6 @@ namespace WebApplications.HttpRecorder.Tests
                 _output.WriteLine(json);
 
 
-
-                //Assert.Equal("8eh1pQYr1nOioHTxdvDXAw", hash);
-                //Assert.Equal(51, data.Length);
-
                 using (HttpRequestMessage newRequest =
                     MessagePackSerializer.Deserialize<HttpRequestMessage>(data, RecorderResolver.Instance))
                 {
@@ -106,6 +102,21 @@ namespace WebApplications.HttpRecorder.Tests
                     }
                 }
             }
+            /*
+            using (Cassette cassette = new Cassette(defaultOptions: CassetteOptions.Default))
+            {
+                using (HttpClient client = cassette.GetClient(
+                    CassetteOptions.Overwrite & CassetteOptions.WaitUntilSaved))
+                {
+
+                }
+                using (HttpClient client = cassette.GetClient(
+                    CassetteOptions.Playback & CassetteOptions.RecordedDelay))
+                {
+
+                }
+            }
+            */
         }
     }
 }

@@ -1,9 +1,11 @@
 ﻿using MessagePack;
 using MessagePack.Formatters;
+using MessagePack.Resolvers;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.Http;
+using WebApplications.HttpRecorder.Internal;
 
 namespace WebApplications.HttpRecorder.Serialization
 {
@@ -28,7 +30,8 @@ namespace WebApplications.HttpRecorder.Serialization
         {
             {typeof(HttpRequestMessage), RequestFormatter.Instance},
             {typeof(HttpResponseMessage), ResponseFormatter.Instance},
-            {typeof(HttpMethod), HttpMethodFormatter.Instance}
+            {typeof(HttpMethod), HttpMethodFormatter.Instance},
+            {typeof(Recording), RecordingFormatter.Instance }
         };
 
         private readonly IMessagePackFormatter<HttpRequestMessage> _customFormatter;
@@ -51,7 +54,7 @@ namespace WebApplications.HttpRecorder.Serialization
 
             return _requestPartResolvers.GetOrAdd(
                 requestParts,
-                rp => new RecorderResolver(new KeyFormatter(requestParts)));
+                rp => new RecorderResolver(new RequestPartsFormatter(requestParts)));
         }
 
         /// <inheritdoc />
@@ -76,7 +79,10 @@ namespace WebApplications.HttpRecorder.Serialization
             /// <summary>
             /// Initializes the <see cref="FormatterCache{T}"/> class.
             /// </summary>
-            static FormatterCache() => Formatter = (IMessagePackFormatter<T>)(_formatterMap.TryGetValue(typeof(T), out object value) ? value : null);
+            static FormatterCache() => Formatter =
+                (IMessagePackFormatter<T>)(_formatterMap.TryGetValue(typeof(T), out object value)
+                    ? value
+                    : StandardResolver.Instance.GetFormatter<T>());
         }
     }
 }

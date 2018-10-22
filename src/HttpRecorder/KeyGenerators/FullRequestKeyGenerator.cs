@@ -13,7 +13,7 @@ namespace WebApplications.HttpRecorder.KeyGenerators
         /// <summary>
         /// The prefix.
         /// </summary>
-        internal const string Prefix = "FL";
+        internal new const string Prefix = "FL";
 
         /// <summary>
         /// The singleton.

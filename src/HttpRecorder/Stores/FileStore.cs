@@ -67,7 +67,7 @@ namespace WebApplications.HttpRecorder.Stores
         /// <inheritdoc />
         public async Task StoreAsync(string hash, byte[] data)
         {
-            if (data == null)
+            if (data is null)
                 throw new ArgumentNullException(nameof(data));
 
             await _lock.WaitAsync();

@@ -17,6 +17,7 @@ Other core features I couldn't find elsewhere:
 - Correctly instrument `HttpClientFactory` clients, and support custom `HttpMessageHandler`s
 - Allowing request matching to be highly customisable (i.e. deciding which parts of a request to match on whilst ignoring other elements)
 - Accurately rebuilding a `HttpResponseMessage` as it was initially returned (this is particularly releveant to the `HttpResponseMessage.Content` type which most libraries do not reproduce accurately)
+- Supports recording of the `HttpResponseMessage.RequestMessage` (see [`RequestRecordMode`](#RequestRecordMode) and [RequestPlaybackMode](#RequestPlaybackMode))
 - Support all content types. [WIP]
 - Parameterisation of Request/Response, as well as allowing a real request to be recorded and played back this could allow for dummy recordings to be made with parameters to take from the request and place in the response. [WIP]
 - Secret hiding.  This was the original driver for parameterisation and can actually be solved using it, the idea is that secrets would not be stored on the cassette (e.g. passwords, keys, etc.) and instead replaced with parameters. [WIP]
@@ -79,33 +80,105 @@ using (Cassette cassette = new Cassette())
 
 TODO
 
-### Changing key matching
+## Changing key matching
 Under the hood the Recorder converts a `HttpRequestMessage` to a 22 character URI Safe (see [Section 2.3 RFC 3986](http://www.ietf.org/rfc/rfc3986.txt)) hash.  It does this by serializing the request to a `byte[]` and then running an MD5 hash over it (yes I know MD5 is 'insecure' but it is a fast hash and we're not using it for security but collision avoidance which it is more than adequate for!).
 
 The key data is generated using a `KeyGenerator`, the default one being `FullRequestKeyGenerator.Instance`.
 
 TODO: Complete explanation
 
-### Changing the backing store
-The recorder reads and writes to a bac
+## Changing the backing store
+The recorder reads and writes to a backing store, by default this is a single Zip Archive, however there are other options available.
+
+TODO
 
 ## Options
-The `Cassette` accepts a `CassetteOptions` object on creation which supply default options for all recordings made to the cassette.  It can also be overloaded when using `GetClient` or `GetHttpMessageHandler` to apply to recordings made by the client, and again on each individual call to `RecordAsync`. Options are applied over the top of the default options.  The most useful is the `RecordMode` options which controls how system handles recordings.
+The `Cassette` accepts a `CassetteOptions` object on creation which supply default options for all recordings made to the cassette.  It can also be overloaded when using `GetClient` or `GetHttpMessageHandler` to apply to recordings made by the client, and again on each individual call to `RecordAsync`. Options are applied over the top of the default options (`CassetteOptions.Default`).
 
-| Option | Recording Found? | Action |
-| --- |:---:|---|
-| **Default** | Y/N | _Will use the default option for the cassette_ |
-| **Auto** | N | Will hit the endpoint and record the response (default) |
-| **Auto** | Y | Will playback the response, without hitting the endpoint (default) |
-| **Playback** | N | _Throws a CassetteNotFoundException Exception_ |
-| **Playback** | Y | Will playback the response, without hitting the endpoint |
-| **Record** | N | Will hit the endpoint and record the response |
-| **Record** | Y | Will hit the endpoint and _not_ record the response |
-| **Overwrite** | Y/N | Will hit the endpoint and record the response |
-| **None** | Y/N | Will hit the endpoint and _not_ record the response |
+You can create a `CassetteOptions` object using its constructor, for example:
+```csharp
+using (Cassette cassette = new Cassette(defaultOptions: new CassetteOptions(
+    // These are the default options anyway, so no need to do this
+    mode: RecordMode.Auto,
+    waitForSave: false,
+    simulateDelay: TimeSpan.Zero,
+    requestRecordMode: RequestRecordMode.Ignore,
+    requestPlaybackMode: RequestPlaybackMode.Auto)))
+{
+    using (HttpClient client = cassette.GetClient(new CassetteOptions(
+        // Force this client to overwrite recordings and wait for saves
+        mode: RecordMode.Overwrite,
+        waitForSave: true)))
+    {
+        ...
+    }
+    using (HttpClient client = cassette.GetClient(new CassetteOptions(
+        // This client will only playback (or error if no matching requests are found), and will use the recorded delay.
+        mode: RecordMode.Playback,
+        simulateDelay: TimeSpan.MinValue)))
+    {
+        ...
+    }
+}
+```
 
-## Parameter [WIP]
-TODO
+You can also use some of the helper options and combine them using the `&` operator, for example the following is functionally equivalent to the above example (though there are more object allocations, so this syntax is best used in places it will not be run frequently):
+```csharp
+using (Cassette cassette = new Cassette(defaultOptions: CassetteOptions.Default))
+{
+    using (HttpClient client = cassette.GetClient(
+        CassetteOptions.Overwrite & CassetteOptions.WaitUntilSaved))
+    {
+        ...
+    }
+    using (HttpClient client = cassette.GetClient(
+        CassetteOptions.Playback & CassetteOptions.RecordedDelay))
+    {
+        ...
+    }
+}
+```
+
+### RecordMode
+The most useful is the `RecordMode` option which controls how system handles recordings:
+
+| Option        | Recording Found? | Outcome |  Action |
+|---------------|:----------------:|---------|---------|
+| **Default**   | :white_check_mark:/:white_large_square:| | _Will use the default option for the cassette_ |
+| **Auto**      | :white_large_square: | :record_button: | Will hit the endpoint and record the response (default) |
+| **Auto**      | :white_check_mark: | :play_or_pause_button: | Will playback the response, without hitting the endpoint (default) |
+| **Playback**  | :white_large_square: | :exclamation: | _Throws a CassetteNotFoundException Exception_ |
+| **Playback**  | :white_check_mark: | :play_or_pause_button: | Will playback the response, without hitting the endpoint |
+| **Record**    | :white_large_square: | :record_button: | Will hit the endpoint and record the response |
+| **Record**    | :white_check_mark: | :left_right_arrow: | Will hit the endpoint and _not_ record the response |
+| **Overwrite** | :white_check_mark:/:white_large_square: | :record_button: | Will hit the endpoint and record the response |
+| **None**      | :white_check_mark:/:white_large_square: | :left_right_arrow: | Will hit the endpoint and _not_ record the response |
+
+### WaitForSave
+The `WaitForSave` option when `true` will force the recorder to wait until the underlying store successfully saves the recording before returning, this will also allow for any store errors to be caught by the caller, otherwise they are just logged.  The default is to not wait, allowing for asychronous recording storage.
+
+### SimulateDelay
+The `SimulateDelay` option allows the recorder to simulate a delay in retrieving a response.  When the value is positive it will wait for the specified time before returning a response.  If the value is negative (e.g. `TimeSpan.MinValue`) then the recorder will use the recorded duration from the original request.  If the value is `TimeSpan.Zero` (or `default(TimeSpan)`) then no delay will be introduced and the playback will proceed as quickly as possible; this is the default setting.
+
+### RequestRecordMode
+The `RequestRecordMode` option is designed for more robust handling of the `HttpResponseMessage.RequestMessage`.  Normally this property should be equal to the original request as passed in, however there is no reason a custom `HttpMessageHandler` cant change or mangle the request object.  To facilitate this following modes are allowed:
+
+| Mode | Meaning |
+|------|---------|
+| **Ignore** | The request is not recorded, nor is it checked for being changed, this makes for more compact and faster recording. (_Default_) |
+| **RecordIfChanged** | The request is serialized prior to using the `HttpMessageHandler` and then serialized again from `HttpResponseMessage.RequestMessage` the two are compared and if identical the request is not stored. This makes recording slower as it will perform at least one additional serialization (and potentially two when using a non-default full key generator), and will compare the two serialized forms. |
+| **AlwaysRecord** | The `HttpResponseMessage.RequestMessage` is always serialized and recorded, this is particularly useful if you know that it normally changes and avoids a comparison and potentially an extra serialization. |
+
+_**Note:** The `RequestRecordMode` option doesn't effect playback in any way._
+
+### RequestPlaybackMode
+The `RequestPlaybackMode` option is designed to complement the `RequestRecordMode` by determining what the recorded should do when it finds a request in a recording:
+
+| Mode | Meaning |
+|------|---------|
+| **Auto** | If a request is found in a recording it will be deserialized and the `HttpResponseMessage.RequestMessage` will be set to the recorded value. (_Default_) |
+| **IgnoreRecorded** | The `HttpResponseMessage.RequestMessage` will always be set to the request initially passed in, any recorded request will be ignored. |
+| **UseRecorded** | The `HttpResponseMessage.RequestMessage` will be set to the recorded request, if a recording is found, without a request, a `CassetteException` is thrown. |
 
 ## And finally...
 ### Credits
@@ -113,11 +186,10 @@ This project was inspired by [Scotch](https://github.com/mleech/scotch) and [VCR
 
 ### TODOs
 
+- Unit tests
+- KeyGeneratorResolver isn't really used, review (was originally to let a cassette file find it's own KeyGenerator without it needing to be supplied, is this really a useful use case?)
 - Complete Content serializers to respect underlying type.
 - Support serialization of exceptions thrown during response retrieval.
-- Add header record to cassette with KeyGenerator info, etc.
-- Validate KeyGenerator name matches cassette.
-- Add replay timing simulation.
 - Complete parameterisation?
 - Add NuGet build & deploy, including source link (see [Hanselman](https://www.hanselman.com/blog/ExploringNETCoresSourceLinkSteppingIntoTheSourceCodeOfNuGetPackagesYouDontOwn.aspx))
 - Add CI build and test

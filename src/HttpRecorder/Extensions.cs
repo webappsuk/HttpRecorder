@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
-using System.Threading.Tasks;
 
 namespace WebApplications.HttpRecorder
 {
@@ -64,7 +63,6 @@ namespace WebApplications.HttpRecorder
         /// Returns a hash string from a data array.
         /// </summary>
         /// <param name="data">The data.</param>
-        /// <param name="generatorName">Name of the generator.</param>
         /// <returns></returns>
         /// <exception cref="ArgumentNullException">request</exception>
         /// <exception cref="ArgumentOutOfRangeException"></exception>
@@ -81,23 +79,6 @@ namespace WebApplications.HttpRecorder
             Convert.ToBase64CharArray(hashBytes, 0, 16, hashChars, 0);
 
             return new string(hashChars, 0, 22).Replace('/', '_').Replace('+', '.');
-        }
-
-        /// <summary>
-        /// Fires and forgets a task.
-        /// </summary>
-        /// <param name="task">The task.</param>
-        /// <param name="onErrors">The on errors.</param>
-        internal static async void FireAndForget(this Task task, Action<Exception> onErrors)
-        {
-            try
-            {
-                await task;
-            }
-            catch (Exception ex)
-            {
-                onErrors(ex);
-            }
         }
     }
 }

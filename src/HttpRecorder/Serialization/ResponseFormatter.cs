@@ -29,10 +29,8 @@ namespace WebApplications.HttpRecorder.Serialization
         /// <inheritdoc />
         public int Serialize(ref byte[] bytes, int offset, HttpResponseMessage response, IFormatterResolver formatterResolver)
         {
-            if (response == null)
-            {
+            if (response is null)
                 return MessagePackBinary.WriteNil(ref bytes, offset);
-            }
 
             int startOffset = offset;
 

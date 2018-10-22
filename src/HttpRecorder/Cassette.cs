@@ -2,6 +2,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -56,7 +57,7 @@ namespace WebApplications.HttpRecorder
             get => _resolver;
             set
             {
-                if (value == null) value = KeyGeneratorResolver.Instance;
+                if (value is null) value = KeyGeneratorResolver.Instance;
                 _resolver = value;
             }
         }
@@ -67,9 +68,7 @@ namespace WebApplications.HttpRecorder
         private readonly KeyedSemaphoreSlim _keyedSemaphoreSlim = new KeyedSemaphoreSlim();
 
         /// <summary>
-        /// Gets the default <see cref="CassetteOptions"/> which are overwritten by any provided <see cref="CassetteOptions"/>.
-        /// Note the <see cref="CassetteOptions.Mode">mode</see> will
-        /// never be <see cref="RecordMode.Default"/> for the <see cref="DefaultOptions"/>
+        /// Gets the default <see cref="CassetteOptions" /> which are overwritten by any provided <see cref="CassetteOptions" />.
         /// </summary>
         /// <value>
         /// The default options.
@@ -175,7 +174,7 @@ namespace WebApplications.HttpRecorder
         {
             Store = store ?? throw new ArgumentNullException(nameof(store));
             // Overwrite default options, preventing the Mode from ever being CassetteOptions.Default
-            DefaultOptions = CassetteOptions.Default.Combine(defaultOptions);
+            DefaultOptions = CassetteOptions.Default & defaultOptions;
             if (keyGenerator is null) keyGenerator = Resolver.Default;
             KeyGenerator = keyGenerator;
             Logger = logger;
@@ -237,9 +236,7 @@ namespace WebApplications.HttpRecorder
         /// <summary>
         /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />.
         /// </summary>
-        /// <param name="request">The request.</param>
         /// <param name="response">The response.</param>
-        /// <param name="options">The options.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <param name="callerFilePath">The caller file path; set automatically.</param>
         /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
@@ -266,7 +263,6 @@ namespace WebApplications.HttpRecorder
         /// <summary>
         /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />.
         /// </summary>
-        /// <param name="request">The request.</param>
         /// <param name="response">The response.</param>
         /// <param name="options">The options.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
@@ -298,7 +294,6 @@ namespace WebApplications.HttpRecorder
         /// </summary>
         /// <param name="request">The request.</param>
         /// <param name="response">The response.</param>
-        /// <param name="options">The options.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <param name="callerFilePath">The caller file path; set automatically.</param>
         /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
@@ -416,9 +411,9 @@ namespace WebApplications.HttpRecorder
                 throw new ArgumentNullException(nameof(request));
 
             // Overwrite defaults with options
-            options = DefaultOptions.Combine(options);
-            RecordMode mode = options.Mode;
-            Debug.Assert(mode != RecordMode.Default);
+            options = DefaultOptions & options;
+            // ReSharper disable once PossibleInvalidOperationException
+            RecordMode mode = options.Mode.Value;
 
             // If we're in 'none' mode skip recording.
             if (mode == RecordMode.None)
@@ -434,113 +429,245 @@ namespace WebApplications.HttpRecorder
             // Get key data hash.
             string hash = key.GetKeyHash();
 
-            // Get lock for hash.
-            using (await _keyedSemaphoreSlim.WaitAsync(hash, cancellationToken))
+            /*
+             * Lock based on hash - so only one operation is allowed for the same hash at the same time.
+             */
+            IDisposable @lock = await _keyedSemaphoreSlim.WaitAsync(hash, cancellationToken);
+            try
             {
                 // Try to get recording from the store.
-                byte[] responseData = null;
+                Recording recording;
                 bool found = false;
+                HttpResponseMessage response = null;
+                byte[] recordingData = null;
 
-                // Unless we're in overwrite mode, try to get a response from the store.
+                /*
+                 * Unless we're in overwrite mode, try to get a response from the store.
+                 */
                 if (mode != RecordMode.Overwrite)
                 {
-                    try
+                    // Logs an error
+                    // ReSharper disable once ParameterOnlyUsedForPreconditionCheck.Local
+                    void Error(string message, Exception exception = null, bool @throw = false)
                     {
-                        responseData = await Store.GetAsync(hash, cancellationToken);
-                    }
-                    catch (Exception e)
-                    {
-                        CassetteException re = new CassetteException(
-                            "The underlying store threw an exception when attempting to retrieve a recording.",
+                        CassetteException cassetteException = new CassetteException(
+                            message,
                             Store.Name,
                             callerFilePath,
                             callerMemberName,
                             callerLineNumber,
-                            e);
-                        Logger.LogError(re);
-                        throw re;
-                    }
+                            exception);
 
-                    found = !(responseData is null);
-                    if (found && responseData.Length < 1)
-                    {
-                        found = false;
-                        responseData = null;
-                    }
-                }
-
-                HttpResponseMessage response;
-                switch (mode)
-                {
-                    case RecordMode.Playback:
-                    case RecordMode.Auto:
-                        if (found)
+                        if (@throw)
                         {
-                            Logger.LogInformation(
-                                "Responding with matching recording.",
-                                Store.Name,
-                                callerFilePath,
-                                callerMemberName,
-                                callerLineNumber);
+                            Logger.LogCritical(cassetteException);
+                            throw cassetteException;
+                        }
 
+                        Logger.LogError(cassetteException);
+                        recording = null;
+                        found = false;
+                    }
+
+                    try
+                    {
+                        recordingData = await Store.GetAsync(hash, cancellationToken);
+                    }
+                    catch (Exception e)
+                    {
+                        Error("The underlying store threw an exception when attempting to retrieve a recording.", e);
+                    }
+
+                    // If we got a response and it has more than 0 bytes consider it fond!
+                    if (!(recordingData is null) && recordingData.Length > 0)
+                    {
+
+                        found = true;
+
+                        // If we're in recording mode don't bother to deserialize it as we're not going to use it
+                        if (mode != RecordMode.Record)
+                        {
+                            // Deserialize recording
                             try
                             {
-                                response = MessagePackSerializer.Deserialize<HttpResponseMessage>(responseData,
+                                recording = MessagePackSerializer.Deserialize<Recording>(recordingData,
                                     RecorderResolver.Instance);
-                                // Set the request
-                                response.RequestMessage = request;
-                                return response;
                             }
                             catch (Exception e)
                             {
-                                CassetteException re = new CassetteException(
-                                    "Failed to deserialize retrieved recording.",
-                                    Store.Name,
-                                    callerFilePath,
-                                    callerMemberName,
-                                    callerLineNumber,
-                                    e);
-                                Logger.LogError(re);
+                                Error("The recording could not be deserialized.", e);
+                            }
 
-                                // Fall-through to allow new recording
-                                found = false;
+                            // Validate key
+                            if (found && !string.Equals(hash, recording.Hash))
+                                Error("The recording's hash did not match, ignoring.");
+                            if (found && !string.Equals(KeyGenerator.Name, recording.KeyGeneratorName))
+                                Error("The recording's key generator name did not match, ignoring.");
+
+                            /*
+                             * If we're in playback or auto mode we need to replay response
+                             */
+                            if (found && (mode == RecordMode.Playback || mode == RecordMode.Auto))
+                            {
+                                if (recording.ResponseData is null)
+                                    Error("No response data found in recording, ignoring.");
+
+
+
+                                // Deserialize response
+                                if (found)
+                                    try
+                                    {
+                                        response = MessagePackSerializer.Deserialize<HttpResponseMessage>(
+                                            recording.ResponseData, RecorderResolver.Instance);
+                                    }
+                                    catch (Exception e)
+                                    {
+                                        Error("Failed to deserialize the response from the store, ignoring.", e);
+                                    }
+
+                                // ReSharper disable once PossibleInvalidOperationException
+                                RequestPlaybackMode requestPlaybackMode = options.RequestPlaybackMode.Value;
+                                if (found)
+                                {
+                                    if (recording.RequestData is null ||
+                                        requestPlaybackMode != RequestPlaybackMode.IgnoreRecorded)
+                                    {
+                                        if (requestPlaybackMode == RequestPlaybackMode.UseRecorded)
+                                            Error(
+                                                "No request found in the recording, and in RequestPlaybackMode UseRecorded.",
+                                                null,
+                                                true);
+
+                                        // ReSharper disable once PossibleNullReferenceException
+                                        response.RequestMessage = request;
+                                    }
+                                    else
+                                    {
+                                        // Deserialize request
+                                        try
+                                        {
+#pragma warning disable DF0023 // Marks undisposed objects assinged to a property, originated from a method invocation.
+                                            // ReSharper disable once PossibleNullReferenceException
+                                            response.RequestMessage =
+                                                MessagePackSerializer.Deserialize<HttpRequestMessage>(
+                                                    recording.RequestData, RecorderResolver.Instance);
+#pragma warning restore DF0023 // Marks undisposed objects assinged to a property, originated from a method invocation.
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            if (requestPlaybackMode == RequestPlaybackMode.UseRecorded)
+                                                Error(
+                                                    "Failed to deserialize the request from the store, and in RequestPlaybackMode UseRecorded.",
+                                                    e,
+                                                    true);
+                                            else
+                                                Error("Failed to deserialize the request from the store, ignoring.", e);
+                                        }
+                                    }
+                                }
+
+                                // ReSharper disable once PossibleInvalidOperationException
+                                if (found)
+                                {
+                                    TimeSpan simulateDelay = options.SimulateDelay.Value;
+                                    if (simulateDelay != default(TimeSpan))
+                                    {
+                                        int delay = simulateDelay < TimeSpan.Zero
+                                            ? recording.DurationMs
+                                            : (int)simulateDelay.TotalMilliseconds;
+
+                                        Logger.LogInformation(
+                                            $"Responding with matching recording from '{recording.RecordedUtc.ToLocalTime()}' after {delay}ms simulated delay.",
+                                            Store.Name,
+                                            callerFilePath,
+                                            callerMemberName,
+                                            callerLineNumber);
+
+                                        await Task.Delay(delay, cancellationToken);
+                                    }
+                                    else
+                                        Logger.LogInformation(
+                                            $"Responding with matching recording from '{recording.RecordedUtc.ToLocalTime()}'.",
+                                            Store.Name,
+                                            callerFilePath,
+                                            callerMemberName,
+                                            callerLineNumber);
+
+                                    return response;
+                                }
                             }
                         }
+                    }
+                }
 
-                        if (mode == RecordMode.Playback)
+                // If we're in playback mode we've failed to get a recording so error
+                if (mode == RecordMode.Playback)
+                {
+                    // Recording not found so error in playback mode.
+                    CassetteNotFoundException exception = new CassetteNotFoundException(
+                        Store.Name,
+                        callerFilePath,
+                        callerMemberName,
+                        callerLineNumber);
+                    Logger.LogError(exception);
+                    throw exception;
+                }
+
+                /*
+                 * Record original request to detect changes if options set to RequestRecordMode.RecordIfChanged
+                 */
+                byte[] requestData;
+                // ReSharper disable once PossibleInvalidOperationException
+                RequestRecordMode requestRecordMode = options.RequestRecordMode.Value;
+                if (!found && requestRecordMode == RequestRecordMode.RecordIfChanged)
+                {
+                    // If the key was generated with the FullRequestKeyGenerator.Instance then the request is already serialized.
+                    if (ReferenceEquals(KeyGenerator, FullRequestKeyGenerator.Instance))
+                        requestData = key;
+                    else
+                    {
+                        try
                         {
-                            // Recording not found so error in playback mode.
-                            CassetteNotFoundException exception = new CassetteNotFoundException(
+                            requestData = MessagePackSerializer.Serialize(request, RecorderResolver.Instance);
+                        }
+                        catch (Exception e)
+                        {
+                            CassetteException ce = new CassetteException(
+                                "Failed to serialize the request.",
                                 Store.Name,
                                 callerFilePath,
                                 callerMemberName,
-                                callerLineNumber);
-                            Logger.LogError(exception);
-                            throw exception;
+                                callerLineNumber,
+                                e);
+                            Logger.LogCritical(ce);
+                            throw ce;
                         }
-
-                        break;
-
-                    case RecordMode.Overwrite:
-                        break;
-
-                    case RecordMode.Record:
-                        break;
-
-                    default:
-                        throw new ArgumentOutOfRangeException(nameof(options), mode,
-                            "The specified mode is not valid!");
+                    }
                 }
+                else
+                    requestData = null;
 
-                // We're now ready to get the response.
+                /*
+                 * Retrieve response from endpoint.
+                 */
+                int durationMs;
+                DateTime recordedUtc;
                 try
                 {
+                    // Use stopwatch to record how long it takes to get a response.
+                    Stopwatch stopwatch = Stopwatch.StartNew();
+#pragma warning disable DF0010 // Marks undisposed local variables.
                     response = await getResponseAsync(request, cancellationToken).ConfigureAwait(false);
+#pragma warning restore DF0010 // Marks undisposed local variables.
+                    durationMs = (int)stopwatch.ElapsedMilliseconds;
+                    recordedUtc = DateTime.UtcNow;
                 }
                 catch (Exception e)
                 {
                     // TODO We could save the exception an repeat on playback, useful for testing handlers
-                    // At same time we should serialize extra info like execution duration, and key generator name.
+                    // Unfortunately MessagePack-CSharp doesn't support exception serialization normally so would need to be
+                    // handled in a custom way.
                     CassetteException re = new CassetteException("Fatal error occured retrieving the response.",
                         Store.Name,
                         callerFilePath,
@@ -555,7 +682,7 @@ namespace WebApplications.HttpRecorder
                 if (found)
                 {
                     Logger.LogInformation(
-                        "Existing recording found.",
+                        "Existing recording found so not overwriting it.",
                         Store.Name,
                         callerFilePath,
                         callerMemberName,
@@ -563,7 +690,9 @@ namespace WebApplications.HttpRecorder
                     return response;
                 }
 
-                // Serialize new response
+
+                // Serialize response
+                byte[] responseData;
                 try
                 {
                     responseData = MessagePackSerializer.Serialize(response, RecorderResolver.Instance);
@@ -571,7 +700,64 @@ namespace WebApplications.HttpRecorder
                 catch (Exception e)
                 {
                     CassetteException re = new CassetteException(
-                        "Failed to serialize HttpResponse.",
+                        "Failed to serialize response, not storing.",
+                        Store.Name,
+                        callerFilePath,
+                        callerMemberName,
+                        callerLineNumber,
+                        e);
+                    Logger.LogError(re);
+                    return response;
+                }
+
+
+                if (requestRecordMode != RequestRecordMode.Ignore)
+                {
+                    byte[] oldRequestData = requestData;
+                    // Serialize the request
+                    try
+                    {
+                        requestData =
+                            MessagePackSerializer.Serialize(response.RequestMessage, RecorderResolver.Instance);
+
+                        // If we're only recording requests on change, check for changes
+                        if (requestRecordMode == RequestRecordMode.RecordIfChanged &&
+                            // ReSharper disable once AssignNullToNotNullAttribute
+                            requestData.SequenceEqual(oldRequestData))
+                            requestData = null;
+                    }
+                    catch (Exception e)
+                    {
+                        CassetteException re = new CassetteException(
+                            "Failed to serialize response's request message, so ignoring check.",
+                            Store.Name,
+                            callerFilePath,
+                            callerMemberName,
+                            callerLineNumber,
+                            e);
+                        Logger.LogError(re);
+                        requestData = null;
+                    }
+                }
+
+                // Create new recording
+                recording = new Recording(
+                    hash,
+                    KeyGenerator.Name,
+                    recordedUtc,
+                    durationMs,
+                    responseData,
+                    requestData);
+
+                // Finally serialize the recording
+                try
+                {
+                    recordingData = MessagePackSerializer.Serialize(recording, RecorderResolver.Instance);
+                }
+                catch (Exception e)
+                {
+                    CassetteException re = new CassetteException(
+                        "Failed to serialize recording, not storing.",
                         Store.Name,
                         callerFilePath,
                         callerMemberName,
@@ -583,22 +769,23 @@ namespace WebApplications.HttpRecorder
 
                 // Set the response
                 Logger.LogInformation(
-                    "Recording response.",
+                    $"Recording response at '{recordedUtc.ToLocalTime()}' (took {durationMs} ms).",
                     Store.Name,
                     callerFilePath,
                     callerMemberName,
                     callerLineNumber);
 
                 if (options.WaitForSave == true)
+                {
                     try
                     {
-                        await Store.StoreAsync(hash, responseData);
+                        await Store.StoreAsync(hash, recordingData);
                     }
                     catch (Exception e)
                     {
                         // Just log the error.
                         CassetteException re = new CassetteException(
-                            "Failed to store response.",
+                            "Failed to store recording.",
                             Store.Name,
                             callerFilePath,
                             callerMemberName,
@@ -606,23 +793,64 @@ namespace WebApplications.HttpRecorder
                             e);
                         Logger.LogError(re);
                     }
+
+                    // We can now dispose the lock safely.
+                    @lock.Dispose();
+                }
                 else
-                    Store.StoreAsync(hash, responseData)
-                        .FireAndForget(e =>
-                        {
-                            // Just log the error.
-                            CassetteException re = new CassetteException(
-                                "Failed to store response.",
-                                Store.Name,
-                                callerFilePath,
-                                callerMemberName,
-                                callerLineNumber,
-                                e);
-                            Logger.LogError(re);
-                        });
+                    // Store the recording asynchronously, and don't wait the result (errors will be logged and suppressed).
+                    StoreAsync(hash, recordingData, @lock, callerFilePath, callerMemberName, callerLineNumber);
 
                 // Return the response.
                 return response;
+            }
+            catch
+            {
+                // If we're throwing an exception dispose the lock.
+                @lock.Dispose();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Stores the recording asynchronously without being waited for.
+        /// </summary>
+        /// <param name="hash">The hash.</param>
+        /// <param name="recordingData">The recording data.</param>
+        /// <param name="lock">The @lock.</param>
+        /// <param name="callerFilePath">The caller file path.</param>
+        /// <param name="callerMemberName">Name of the caller member.</param>
+        /// <param name="callerLineNumber">The caller line number.</param>
+        private async void StoreAsync(
+                    string hash,
+                    byte[] recordingData,
+                    IDisposable @lock,
+                    string callerFilePath,
+                    string callerMemberName,
+                    int callerLineNumber)
+        {
+            try
+            {
+                await Store.StoreAsync(hash, recordingData);
+            }
+            catch (Exception ex)
+            {
+
+                // Just log the error.
+                CassetteException re = new CassetteException(
+                    "Failed to store recording.",
+                    Store.Name,
+                    callerFilePath,
+                    callerMemberName,
+                    callerLineNumber,
+                    ex);
+                Logger.LogError(re);
+            }
+            finally
+            {
+                // We don't release the hash lock until storage is complete, even though the underlying response
+                // has already been returned.
+                @lock.Dispose();
             }
         }
 

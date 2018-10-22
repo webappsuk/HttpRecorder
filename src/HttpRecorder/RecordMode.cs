@@ -3,11 +3,6 @@
     public enum RecordMode
     {
         /// <summary>
-        /// The default recording mode as specified by <see cref="Cassette.DefaultOptions"/>.
-        /// </summary>
-        Default = 0,
-
-        /// <summary>
         /// Records messages to a cassette if a request match is not found;
         /// otherwise is will use the cassette to replay.
         /// </summary>

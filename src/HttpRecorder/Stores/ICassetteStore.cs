@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace WebApplications.HttpRecorder.Stores
 {
     /// <summary>
-    /// Allows for storage and retrieval of <see cref="Recording">recordings</see>.
+    /// Allows for storage and retrieval of recording data.
     /// </summary>
     public interface ICassetteStore : IDisposable
     {
@@ -23,7 +23,7 @@ namespace WebApplications.HttpRecorder.Stores
         /// <param name="hash">The hash.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         /// <returns>
-        /// An awaitable task that returns the <see cref="Recording" /> if any;
+        /// An awaitable task that returns the data if any;
         /// otherwise <see langword="null" />.
         /// </returns>
         Task<byte[]> GetAsync(string hash, CancellationToken cancellationToken = default(CancellationToken));

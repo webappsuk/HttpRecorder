@@ -30,10 +30,8 @@ namespace WebApplications.HttpRecorder.Serialization
         public int Serialize(ref byte[] bytes, int offset, HttpRequestMessage request,
             IFormatterResolver formatterResolver)
         {
-            if (request == null)
-            {
+            if (request is null)
                 return MessagePackBinary.WriteNil(ref bytes, offset);
-            }
 
             int startOffset = offset;
 

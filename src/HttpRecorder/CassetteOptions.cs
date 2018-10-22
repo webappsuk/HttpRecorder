@@ -1,37 +1,69 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace WebApplications.HttpRecorder
 {
     /// <summary>
     /// Recording options.
     /// </summary>
-    public class CassetteOptions : IEquatable<CassetteOptions>
+    public sealed class CassetteOptions : IEquatable<CassetteOptions>
     {
+        /// <summary>
+        /// Indicates options that have no effect on the current defaults.
+        /// </summary>
+        public static readonly CassetteOptions None = new CassetteOptions();
+
         /// <summary>
         /// The default recording options.
         /// </summary>
         public static readonly CassetteOptions Default =
-            new CassetteOptions(RecordMode.Auto, false, (IReadOnlyList<Parameter>)Array.Empty<Parameter>());
+            new CassetteOptions(
+                RecordMode.Auto,
+                false,
+                TimeSpan.Zero,
+                HttpRecorder.RequestRecordMode.Ignore,
+                HttpRecorder.RequestPlaybackMode.Auto);
 
         /// <summary>
         /// The playback mode.
         /// </summary>
         public static readonly CassetteOptions Playback =
-            new CassetteOptions(RecordMode.Playback, null, (IReadOnlyList<Parameter>)null);
+            new CassetteOptions(RecordMode.Playback);
 
         /// <summary>
         /// The record mode.
         /// </summary>
         public static readonly CassetteOptions Record =
-            new CassetteOptions(RecordMode.Record, null, (IReadOnlyList<Parameter>)null);
+            new CassetteOptions(RecordMode.Record);
 
         /// <summary>
         /// The overwrite mode.
         /// </summary>
         public static readonly CassetteOptions Overwrite =
-            new CassetteOptions(RecordMode.Overwrite, null, (IReadOnlyList<Parameter>)null);
+            new CassetteOptions(RecordMode.Overwrite);
+
+        /// <summary>
+        /// Will ensure recordings are saved before returning a response.
+        /// </summary>
+        public static readonly CassetteOptions WaitUntilSaved =
+            new CassetteOptions(waitForSave: true);
+
+        /// <summary>
+        /// Will simulate the delay based on the original response duration.
+        /// </summary>
+        public static readonly CassetteOptions RecordedDelay =
+            new CassetteOptions(simulateDelay: TimeSpan.MinValue);
+
+        /// <summary>
+        /// Will record changes made to the request object by the message handler.
+        /// </summary>
+        public static readonly CassetteOptions RecordedRequestChanges =
+            new CassetteOptions(requestRecordMode: HttpRecorder.RequestRecordMode.RecordIfChanged);
+
+        /// <summary>
+        /// Will record the request.
+        /// </summary>
+        public static readonly CassetteOptions RecordedRequests =
+            new CassetteOptions(requestRecordMode: HttpRecorder.RequestRecordMode.AlwaysRecord);
 
         /// <summary>
         /// Gets the mode.
@@ -39,7 +71,7 @@ namespace WebApplications.HttpRecorder
         /// <value>
         /// The mode.
         /// </value>
-        public RecordMode Mode { get; }
+        public RecordMode? Mode { get; }
 
         /// <summary>
         /// Gets a value indicating whether saving should be completed before the response is returned during recording.
@@ -51,130 +83,50 @@ namespace WebApplications.HttpRecorder
         public bool? WaitForSave { get; }
 
         /// <summary>
-        /// Gets any parameters.
+        /// Gets a value indicating whether playback should simulate a delay in receiving a response (useful for testing).
         /// </summary>
         /// <value>
-        /// The parameters.
+        ///   Positive values indicate the amount to wait; <see cref="TimeSpan.Zero"/> indicates no delay (default);
+        /// negative values wil use the delay stored in the original recording.
         /// </value>
-        public IReadOnlyList<Parameter> Parameters { get; }
+        public TimeSpan? SimulateDelay { get; }
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="CassetteOptions" /> class.
+        /// Gets a value indicating how response requests should be handled.
         /// </summary>
-        /// <param name="parameters">The parameters.</param>
-        public CassetteOptions(params Parameter[] parameters)
-            : this(RecordMode.Default, null, NormalizeParameters(parameters))
-        {
-        }
+        /// <value>
+        /// The request handling.
+        /// </value>
+        public RequestRecordMode? RequestRecordMode { get; }
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="CassetteOptions" /> class.
+        /// Gets a value indicating how response requests should be handled.
         /// </summary>
-        /// <param name="parameters">The parameters.</param>
-        public CassetteOptions(IEnumerable<Parameter> parameters)
-            : this(RecordMode.Default, null, NormalizeParameters(parameters))
-        {
-        }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="CassetteOptions" /> class.
-        /// </summary>
-        /// <param name="mode">The mode.</param>
-        /// <param name="waitForSave">if set to <c>true</c> wait for save when returning responses.</param>
-        /// <param name="parameters">The parameters.</param>
-        public CassetteOptions(
-            RecordMode mode,
-            bool? waitForSave,
-            params Parameter[] parameters)
-            : this(mode, waitForSave, NormalizeParameters(parameters))
-        {
-        }
+        /// <value>
+        /// The request handling.
+        /// </value>
+        public RequestPlaybackMode? RequestPlaybackMode { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="CassetteOptions" /> class.
         /// </summary>
         /// <param name="mode">The mode.</param>
         /// <param name="waitForSave">if set to <c>true</c> wait for save when returning responses.</param>
-        /// <param name="parameters">The parameters.</param>
+        /// <param name="simulateDelay">The simulate delay.</param>
+        /// <param name="requestRecordMode">The request recording mode.</param>
+        /// <param name="requestPlaybackMode">The request playback mode.</param>
         public CassetteOptions(
-            RecordMode mode = RecordMode.Default,
+            RecordMode? mode = null,
             bool? waitForSave = null,
-            IEnumerable<Parameter> parameters = null)
-            : this(mode, waitForSave, NormalizeParameters(parameters))
-        {
-        }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="CassetteOptions" /> class. Used
-        /// internally by <see cref="Combine" />, when parameters are already valid.
-        /// </summary>
-        /// <param name="mode">The mode.</param>
-        /// <param name="waitForSave">if set to <c>true</c> wait for save when returning responses.</param>
-        /// <param name="parameters">The parameters.</param>
-        private CassetteOptions(
-            RecordMode mode,
-            bool? waitForSave,
-            IReadOnlyList<Parameter> parameters)
+            TimeSpan? simulateDelay = null,
+            RequestRecordMode? requestRecordMode = null,
+            RequestPlaybackMode? requestPlaybackMode = null)
         {
             Mode = mode;
             WaitForSave = waitForSave;
-            Parameters = parameters;
-        }
-
-        /// <summary>
-        /// Normalizes the parameters to a distinct ordered list.
-        /// </summary>
-        /// <param name="parameters">The parameters.</param>
-        /// <returns></returns>
-        private static IReadOnlyList<Parameter> NormalizeParameters(IEnumerable<Parameter> parameters)
-        {
-            if (parameters is null)
-                return Array.Empty<Parameter>();
-
-            Parameter[] orderedDistinct = parameters.OrderBy(s => s.Value).Distinct().ToArray();
-            return orderedDistinct.Length < 1 ? Array.Empty<Parameter>() : orderedDistinct;
-        }
-
-
-        /// <summary>
-        /// Combines the <param name="options">specified options</param> with these options.
-        /// </summary>
-        /// <param name="options">The options to merge over these options.</param>
-        /// <returns></returns>
-        public CassetteOptions Combine(CassetteOptions options)
-        {
-            if (options is null)
-                return this;
-
-            RecordMode mode = options.Mode == RecordMode.Default ? Mode : options.Mode;
-            bool? waitForSave = options.WaitForSave ?? WaitForSave;
-
-            int osc = options.Parameters.Count;
-            if (osc < 1)
-            {
-                // No new parameters, check for mode change
-                if (mode == Mode && waitForSave == WaitForSave)
-                    return this;
-
-                return new CassetteOptions(mode, waitForSave, Parameters);
-            }
-
-            int sc = Parameters.Count;
-            if (sc < 1)
-            {
-                // Only have new parameters, if we have a mode we can use as is
-                if (mode == options.Mode && waitForSave == options.WaitForSave)
-                    return options;
-
-                return new CassetteOptions(mode, options.WaitForSave, options.Parameters);
-            }
-
-            // Need to create combination
-            return new CassetteOptions(
-                mode,
-                waitForSave,
-                options.Parameters.Concat(Parameters)
-            );
+            SimulateDelay = simulateDelay;
+            RequestRecordMode = requestRecordMode;
+            RequestPlaybackMode = requestPlaybackMode;
         }
 
         /// <inheritdoc />
@@ -182,7 +134,11 @@ namespace WebApplications.HttpRecorder
         {
             if (ReferenceEquals(null, other)) return false;
             if (ReferenceEquals(this, other)) return true;
-            return Mode == other.Mode && Parameters.SequenceEqual(other.Parameters);
+            return Mode == other.Mode &&
+                   WaitForSave == other.WaitForSave &&
+                   SimulateDelay.Equals(other.SimulateDelay) &&
+                   RequestRecordMode == other.RequestRecordMode &&
+                   RequestPlaybackMode == other.RequestPlaybackMode;
         }
 
         /// <inheritdoc />
@@ -190,7 +146,7 @@ namespace WebApplications.HttpRecorder
         {
             if (ReferenceEquals(null, obj)) return false;
             if (ReferenceEquals(this, obj)) return true;
-            return obj.GetType() == GetType() && Equals((CassetteOptions)obj);
+            return obj is CassetteOptions other && Equals(other);
         }
 
         /// <inheritdoc />
@@ -198,9 +154,11 @@ namespace WebApplications.HttpRecorder
         {
             unchecked
             {
-                int hashCode = (int)Mode;
-                foreach (Parameter parameter in Parameters)
-                    hashCode = (hashCode * 397) ^ parameter.GetHashCode();
+                int hashCode = Mode.GetHashCode();
+                hashCode = (hashCode * 397) ^ WaitForSave.GetHashCode();
+                hashCode = (hashCode * 397) ^ SimulateDelay.GetHashCode();
+                hashCode = (hashCode * 397) ^ RequestRecordMode.GetHashCode();
+                hashCode = (hashCode * 397) ^ RequestPlaybackMode.GetHashCode();
                 return hashCode;
             }
         }
@@ -213,10 +171,7 @@ namespace WebApplications.HttpRecorder
         /// <returns>
         /// The result of the operator.
         /// </returns>
-        public static bool operator ==(CassetteOptions left, CassetteOptions right)
-        {
-            return Equals(left, right);
-        }
+        public static bool operator ==(CassetteOptions left, CassetteOptions right) => Equals(left, right);
 
         /// <summary>
         /// Implements the operator !=.
@@ -226,9 +181,25 @@ namespace WebApplications.HttpRecorder
         /// <returns>
         /// The result of the operator.
         /// </returns>
-        public static bool operator !=(CassetteOptions left, CassetteOptions right)
-        {
-            return !Equals(left, right);
-        }
+        public static bool operator !=(CassetteOptions left, CassetteOptions right) => !Equals(left, right);
+
+        /// <summary>
+        /// Implements the operator &amp; overwriting the <paramref name="left"/> options with
+        /// any non-<c>null</c> <paramref name="right"/> options.
+        /// </summary>
+        /// <param name="left">The left.</param>
+        /// <param name="right">The right.</param>
+        /// <returns>
+        /// The result of the operator.
+        /// </returns>
+        public static CassetteOptions operator &(CassetteOptions left, CassetteOptions right)
+            => right is null ? left :
+                left is null ? right :
+                new CassetteOptions(
+                    right.Mode ?? left.Mode,
+                    right.WaitForSave ?? left.WaitForSave,
+                    right.SimulateDelay ?? left.SimulateDelay,
+                    right.RequestRecordMode ?? left.RequestRecordMode,
+                    right.RequestPlaybackMode ?? left.RequestPlaybackMode);
     }
 }
