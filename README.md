@@ -143,16 +143,16 @@ using (Cassette cassette = new Cassette(defaultOptions: CassetteOptions.Default)
 The most useful is the `RecordMode` option which controls how system handles recordings:
 
 | Option        | Recording Found? | Outcome |  Action |
-|---------------|:----------------:|---------|---------|
-| **Default**   | :white_check_mark:/:white_large_square:| | _Will use the default option for the cassette_ |
-| **Auto**      | :white_large_square: | :record_button: | Will hit the endpoint and record the response (default) |
+|---------------|:----------------:|:-------:|---------|
+| **Default**   | :white_check_mark:/:negative_squared_cross_mark:| | _Will use the default option for the cassette_ |
+| **Auto**      | :negative_squared_cross_mark: | :record_button: | Will hit the endpoint and record the response (default) |
 | **Auto**      | :white_check_mark: | :play_or_pause_button: | Will playback the response, without hitting the endpoint (default) |
-| **Playback**  | :white_large_square: | :exclamation: | _Throws a CassetteNotFoundException Exception_ |
+| **Playback**  | :negative_squared_cross_mark: | :exclamation: | _Throws a CassetteNotFoundException Exception_ |
 | **Playback**  | :white_check_mark: | :play_or_pause_button: | Will playback the response, without hitting the endpoint |
-| **Record**    | :white_large_square: | :record_button: | Will hit the endpoint and record the response |
+| **Record**    | :negative_squared_cross_mark: | :record_button: | Will hit the endpoint and record the response |
 | **Record**    | :white_check_mark: | :left_right_arrow: | Will hit the endpoint and _not_ record the response |
-| **Overwrite** | :white_check_mark:/:white_large_square: | :record_button: | Will hit the endpoint and record the response |
-| **None**      | :white_check_mark:/:white_large_square: | :left_right_arrow: | Will hit the endpoint and _not_ record the response |
+| **Overwrite** | :white_check_mark:/:negative_squared_cross_mark: | :record_button: | Will hit the endpoint and record the response |
+| **None**      | :white_check_mark:/:negative_squared_cross_mark: | :left_right_arrow: | Will hit the endpoint and _not_ record the response |
 
 ### WaitForSave
 The `WaitForSave` option when `true` will force the recorder to wait until the underlying store successfully saves the recording before returning, this will also allow for any store errors to be caught by the caller, otherwise they are just logged.  The default is to not wait, allowing for asychronous recording storage.
