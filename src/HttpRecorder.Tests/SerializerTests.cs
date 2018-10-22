@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 using WebApplications.HttpRecorder.Serialization;
+using WebApplications.HttpRecorder.Stores;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -67,8 +68,12 @@ namespace WebApplications.HttpRecorder.Tests
         [Fact]
         public async Task TestStreams()
         {
-            using (Cassette cassette = new Cassette())
-            using (HttpClient client = cassette.GetClient())
+            using (DirectoryStore store = new DirectoryStore("Recordings"))
+            using (Cassette cassette = new Cassette(
+                //store,
+                logger: new OutputRecorderLogger(_output)))
+            using (HttpMessageHandler handler = cassette.GetHttpMessageHandler())
+            using (HttpClient client = new HttpClient(handler))
             using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://jsonplaceholder.typicode.com/posts"))
             using (MemoryStream memoryStream = new MemoryStream())
             {

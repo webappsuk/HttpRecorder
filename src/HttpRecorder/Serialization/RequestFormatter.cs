@@ -86,7 +86,7 @@ namespace WebApplications.HttpRecorder.Serialization
 
             int count = MessagePackBinary.ReadArrayHeader(bytes, offset, out readSize);
             offset += readSize;
-            if (count != 5) throw new InvalidOperationException("Invalid array count.");
+            if (count != 5) throw new InvalidOperationException("Request format invalid.");
 
             // RequestPart.Version:
             string versionStr = MessagePackBinary.ReadString(bytes, offset, out readSize);

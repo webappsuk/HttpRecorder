@@ -1,5 +1,7 @@
-﻿using System;
+﻿using MessagePack;
+using System;
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -7,6 +9,9 @@ using System.Threading.Tasks;
 using WebApplications.HttpRecorder.Exceptions;
 using WebApplications.HttpRecorder.Internal;
 using WebApplications.HttpRecorder.KeyGenerators;
+using WebApplications.HttpRecorder.Logging;
+using WebApplications.HttpRecorder.Serialization;
+using WebApplications.HttpRecorder.Stores;
 
 [assembly: InternalsVisibleTo("HttpRecorder.Tests")]
 
@@ -31,22 +36,14 @@ namespace WebApplications.HttpRecorder
     /// <summary>
     /// A recorder is used to record messages sent using a <see cref="HttpClient" />.
     /// </summary>
-    public class Cassette : IDisposable
+    public sealed class Cassette : IDisposable
     {
+        private readonly bool _disposeStore;
+
         /// <summary>
         /// The current key generator resolver.
         /// </summary>
-        private static IKeyGeneratorResolver _keyGeneratorResolver = KeyGenerators.KeyGeneratorResolver.Instance;
-
-        /// <summary>
-        /// Gets the default <see cref="RecordingOptions"/> which are overwritten by any provided <see cref="RecordingOptions"/>.
-        /// Note the <see cref="RecordingOptions.Mode">mode</see> will
-        /// never be <see cref="RecordMode.Default"/> for the <see cref="DefaultOptions"/>
-        /// </summary>
-        /// <value>
-        /// The default options.
-        /// </value>
-        public RecordingOptions DefaultOptions { get; }
+        private static IKeyGeneratorResolver _resolver = KeyGeneratorResolver.Instance;
 
         /// <summary>
         /// Gets or sets the key generator resolver.
@@ -54,15 +51,38 @@ namespace WebApplications.HttpRecorder
         /// <value>
         /// The key generator.
         /// </value>
-        public static IKeyGeneratorResolver KeyGeneratorResolver
+        public static IKeyGeneratorResolver Resolver
         {
-            get => _keyGeneratorResolver;
+            get => _resolver;
             set
             {
-                if (value == null) value = KeyGenerators.KeyGeneratorResolver.Instance;
-                _keyGeneratorResolver = value;
+                if (value == null) value = KeyGeneratorResolver.Instance;
+                _resolver = value;
             }
         }
+
+        /// <summary>
+        /// The keyed semaphore slim allows locking based on request hash.
+        /// </summary>
+        private readonly KeyedSemaphoreSlim _keyedSemaphoreSlim = new KeyedSemaphoreSlim();
+
+        /// <summary>
+        /// Gets the default <see cref="CassetteOptions"/> which are overwritten by any provided <see cref="CassetteOptions"/>.
+        /// Note the <see cref="CassetteOptions.Mode">mode</see> will
+        /// never be <see cref="RecordMode.Default"/> for the <see cref="DefaultOptions"/>
+        /// </summary>
+        /// <value>
+        /// The default options.
+        /// </value>
+        public CassetteOptions DefaultOptions { get; }
+
+        /// <summary>
+        /// Gets the underlying <see cref="ICassetteStore">cassette store</see>.
+        /// </summary>
+        /// <value>
+        /// The cassette store.
+        /// </value>
+        public ICassetteStore Store { get; }
 
         /// <summary>
         /// Gets the key generator for this recorder.
@@ -73,41 +93,93 @@ namespace WebApplications.HttpRecorder
         public IKeyGenerator KeyGenerator { get; }
 
         /// <summary>
-        /// Gets the cassette file path for this recorder.
+        /// Gets the logger.
         /// </summary>
         /// <value>
-        /// The cassette file path.
+        /// The logger.
         /// </value>
-        public string Path { get; }
+        public IRecorderLogger Logger { get; }
+
+        /// <summary>
+        /// Gets the cassette name for this recorder.
+        /// </summary>
+        /// <value>
+        /// The cassette name.
+        /// </value>
+        public string Name => Store.Name;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Cassette" /> class, with storage provided
+        /// by a <see cref="FileStore">single file</see> located alongside the caller source file.
+        /// </summary>
+        /// <param name="defaultOptions">The default options.</param>
+        /// <param name="keyGenerator">The key generator resolver.</param>
+        /// <param name="logger">The logger.</param>
+        /// <param name="callerFilePath">The caller name; set automatically, leave as <see langword="null" />.</param>
+        public Cassette(
+            CassetteOptions defaultOptions = null,
+            IKeyGenerator keyGenerator = null,
+            IRecorderLogger logger = null,
+            [CallerFilePath] string callerFilePath = "")
+            : this(
+#pragma warning disable DF0000 // Marks undisposed anonymous objects from object creations.
+                new FileStore(Path.Combine(
+                    Path.GetDirectoryName(callerFilePath),
+                    Path.GetFileNameWithoutExtension(callerFilePath) + "_cassette" + FileStore.DefaultExtension)),
+#pragma warning restore DF0000 // Marks undisposed anonymous objects from object creations.
+                defaultOptions,
+                keyGenerator,
+                logger,
+                true)
+        {
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="Cassette" /> class.
         /// </summary>
-        /// <param name="path">The cassette file path; optional, <see langword="null" /> to auto-generate file based on caller file path.</param>
+        /// <param name="filePath">The file path.</param>
         /// <param name="defaultOptions">The default options.</param>
         /// <param name="keyGenerator">The key generator resolver.</param>
-        /// <param name="callerFilePath">The caller file path; set automatically, leave as <see langword="null" />.</param>
+        /// <param name="logger">The logger.</param>
         public Cassette(
-            string path = null,
-            RecordingOptions defaultOptions = null,
+            string filePath,
+            CassetteOptions defaultOptions = null,
             IKeyGenerator keyGenerator = null,
-            [CallerFilePath] string callerFilePath = "")
+            IRecorderLogger logger = null)
+            : this(
+#pragma warning disable DF0000 // Marks undisposed anonymous objects from object creations.
+                new FileStore(filePath),
+#pragma warning restore DF0000 // Marks undisposed anonymous objects from object creations.
+                defaultOptions,
+                keyGenerator,
+                logger,
+                true)
         {
-            // Overwrite default options, preventing the Mode from ever being RecordingOptions.Default
-            DefaultOptions = RecordingOptions.Default.Combine(defaultOptions);
+        }
 
-            if (path == null)
-            {
-                // Auto-generate cassette file path
-                path = System.IO.Path.Combine(
-                    System.IO.Path.GetDirectoryName(callerFilePath),
-                    $"{System.IO.Path.GetFileNameWithoutExtension(callerFilePath)}.hrc");
-            }
-
-            if (keyGenerator is null) keyGenerator = KeyGeneratorResolver.Default;
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Cassette" /> class.
+        /// </summary>
+        /// <param name="store">The underlying store for this cassette.</param>
+        /// <param name="defaultOptions">The default options.</param>
+        /// <param name="keyGenerator">The key generator resolver.</param>
+        /// <param name="logger">The logger.</param>
+        /// <param name="disposeStore">if set to <c>true</c> the cassette will dispose the store when it is disposed.</param>
+        /// <exception cref="ArgumentNullException">store</exception>
+        public Cassette(
+            ICassetteStore store,
+            CassetteOptions defaultOptions = null,
+            IKeyGenerator keyGenerator = null,
+            IRecorderLogger logger = null,
+            bool disposeStore = false)
+        {
+            Store = store ?? throw new ArgumentNullException(nameof(store));
+            // Overwrite default options, preventing the Mode from ever being CassetteOptions.Default
+            DefaultOptions = CassetteOptions.Default.Combine(defaultOptions);
+            if (keyGenerator is null) keyGenerator = Resolver.Default;
             KeyGenerator = keyGenerator;
-
-            Path = path;
+            Logger = logger;
+            _disposeStore = disposeStore;
         }
 
         // ReSharper disable ExplicitCallerInfoArgument
@@ -118,19 +190,23 @@ namespace WebApplications.HttpRecorder
         /// Gets a new <see cref="HttpClient" /> for recording.
         /// </summary>
         /// <param name="options">The options.</param>
-        /// <param name="callerMemberName">Name of the caller member; set automatically, leave as <see langword="null" /></param>
-        /// <param name="callerFilePath">The caller file path; set automatically, leave as <see langword="null" /></param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
         /// <returns></returns>
         public HttpClient GetClient(
-            RecordingOptions options = null,
+            CassetteOptions options = null,
+            [CallerFilePath] string callerFilePath = "",
             [CallerMemberName] string callerMemberName = "",
-            [CallerFilePath] string callerFilePath = "")
+            [CallerLineNumber] int callerLineNumber = 0)
             => new HttpClient(
                 new RecordingMessageHandler(
                     this,
                     null,
                     options,
-                    callerMemberName),
+                    callerFilePath,
+                    callerMemberName,
+                    callerLineNumber),
                 true);
 
         /// <summary>
@@ -140,71 +216,172 @@ namespace WebApplications.HttpRecorder
         /// <param name="innerHandler">The inner handler; optional, defaults to creating a <see cref="HttpClientHandler" /> which is disposed when
         /// this instance is disposed, if specified, you will need to dispose the inner handler manually.</param>
         /// <param name="options">The options.</param>
-        /// <param name="callerMemberName">Name of the caller member.</param>
-        /// <param name="callerFilePath">The caller file path.</param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
         /// <returns></returns>
         public HttpMessageHandler GetHttpMessageHandler(
             HttpMessageHandler innerHandler = null,
-            RecordingOptions options = null,
+            CassetteOptions options = null,
+            [CallerFilePath] string callerFilePath = "",
             [CallerMemberName] string callerMemberName = "",
-            [CallerFilePath] string callerFilePath = "")
+            [CallerLineNumber] int callerLineNumber = 0)
             => new RecordingMessageHandler(
                 this,
                 innerHandler,
                 options,
-                callerMemberName);
+                callerFilePath,
+                callerMemberName,
+                callerLineNumber);
 
         /// <summary>
-        /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />. Should use
-        /// <see cref="RecordAsync" /> if possible, this method is provided for convenience and wraps the asynchronous version.
+        /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />.
         /// </summary>
         /// <param name="request">The request.</param>
-        /// <param name="getResponse">The get response.</param>
+        /// <param name="response">The response.</param>
         /// <param name="options">The options.</param>
-        /// <param name="timeout">The timeout.</param>
-        /// <param name="callerMemberName">Name of the caller member.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
         /// <returns>
         /// The <see cref="HttpResponseMessage" />.
         /// </returns>
         /// <exception cref="ArgumentNullException">request
         /// or
         /// request</exception>
-        /// <exception cref="ArgumentOutOfRangeException">timeout</exception>
-        public HttpResponseMessage Record(
+        /// <exception cref="ArgumentOutOfRangeException">mode - null</exception>
+        public Task<HttpResponseMessage> RecordAsync(
+            HttpResponseMessage response,
+            CancellationToken cancellationToken = default(CancellationToken),
+            [CallerFilePath] string callerFilePath = "",
+            [CallerMemberName] string callerMemberName = "",
+            [CallerLineNumber] int callerLineNumber = 0)
+            => RecordAsync(
+                response.RequestMessage,
+                (r, ct) => Task.FromResult(response), null, cancellationToken, callerFilePath,
+                callerMemberName,
+                callerLineNumber);
+
+        /// <summary>
+        /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />.
+        /// </summary>
+        /// <param name="request">The request.</param>
+        /// <param name="response">The response.</param>
+        /// <param name="options">The options.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
+        /// <returns>
+        /// The <see cref="HttpResponseMessage" />.
+        /// </returns>
+        /// <exception cref="ArgumentNullException">request
+        /// or
+        /// request</exception>
+        /// <exception cref="ArgumentOutOfRangeException">mode - null</exception>
+        public Task<HttpResponseMessage> RecordAsync(
+            HttpResponseMessage response,
+            CassetteOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken),
+            [CallerFilePath] string callerFilePath = "",
+            [CallerMemberName] string callerMemberName = "",
+            [CallerLineNumber] int callerLineNumber = 0)
+            => RecordAsync(
+                response.RequestMessage,
+                (r, ct) => Task.FromResult(response), options, cancellationToken, callerFilePath,
+                callerMemberName,
+                callerLineNumber);
+
+        /// <summary>
+        /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />.
+        /// </summary>
+        /// <param name="request">The request.</param>
+        /// <param name="response">The response.</param>
+        /// <param name="options">The options.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
+        /// <returns>
+        /// The <see cref="HttpResponseMessage" />.
+        /// </returns>
+        /// <exception cref="ArgumentNullException">request
+        /// or
+        /// request</exception>
+        /// <exception cref="ArgumentOutOfRangeException">mode - null</exception>
+        public Task<HttpResponseMessage> RecordAsync(
             HttpRequestMessage request,
-            GetResponse getResponse,
-            RecordingOptions options = null,
-            TimeSpan timeout = default(TimeSpan),
-            [CallerMemberName] string callerMemberName = "")
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-            if (getResponse is null)
-                throw new ArgumentNullException(nameof(request));
+            HttpResponseMessage response,
+            CancellationToken cancellationToken = default(CancellationToken),
+            [CallerFilePath] string callerFilePath = "",
+            [CallerMemberName] string callerMemberName = "",
+            [CallerLineNumber] int callerLineNumber = 0)
+            => RecordAsync(
+                request,
+                (r, ct) => Task.FromResult(response), null, cancellationToken, callerFilePath,
+                callerMemberName,
+                callerLineNumber);
 
-            // Wrap to create 'async' version of function.
-            Task<HttpResponseMessage> GetResponseAsync(HttpRequestMessage r, CancellationToken _) =>
-                Task.FromResult(getResponse(r));
+        /// <summary>
+        /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />.
+        /// </summary>
+        /// <param name="request">The request.</param>
+        /// <param name="response">The response.</param>
+        /// <param name="options">The options.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
+        /// <returns>
+        /// The <see cref="HttpResponseMessage" />.
+        /// </returns>
+        /// <exception cref="ArgumentNullException">request
+        /// or
+        /// request</exception>
+        /// <exception cref="ArgumentOutOfRangeException">mode - null</exception>
+        public Task<HttpResponseMessage> RecordAsync(
+            HttpRequestMessage request,
+            HttpResponseMessage response,
+            CassetteOptions options = null,
+            CancellationToken cancellationToken = default(CancellationToken),
+            [CallerFilePath] string callerFilePath = "",
+            [CallerMemberName] string callerMemberName = "",
+            [CallerLineNumber] int callerLineNumber = 0)
+            => RecordAsync(
+                request,
+                (r, ct) => Task.FromResult(response), options, cancellationToken, callerFilePath,
+                callerMemberName,
+                callerLineNumber);
 
-
-            if (timeout == default(TimeSpan))
-                return RecordAsync(request, GetResponseAsync, options, CancellationToken.None, callerMemberName)
-                    .Result;
-
-            if (timeout <= TimeSpan.Zero)
-                throw new ArgumentOutOfRangeException(nameof(timeout));
-
-            // Create cancellation token based on timeout
-            using (CancellationTokenSource cts = new CancellationTokenSource(timeout))
-            {
-                return RecordAsync(request, GetResponseAsync, options, cts.Token, callerMemberName)
-                    .Result;
-            }
-        }
+        /// <summary>
+        /// Records/playbacks the <see cref="HttpResponseMessage" /> to specified <see cref="HttpRequestMessage" />.
+        /// </summary>
+        /// <param name="request">The request.</param>
+        /// <param name="getResponseAsync">The function to call if a recording is needed.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
+        /// <returns>
+        /// The <see cref="HttpResponseMessage" />.
+        /// </returns>
+        /// <exception cref="ArgumentNullException">request
+        /// or
+        /// request</exception>
+        /// <exception cref="ArgumentOutOfRangeException">mode - null</exception>
+        public Task<HttpResponseMessage> RecordAsync(
+            HttpRequestMessage request,
+            GetResponseAsync getResponseAsync,
+            CancellationToken cancellationToken,
+            [CallerFilePath] string callerFilePath = "",
+            [CallerMemberName] string callerMemberName = "",
+            [CallerLineNumber] int callerLineNumber = 0)
+            => RecordAsync(request, getResponseAsync, null, cancellationToken, callerFilePath, callerMemberName,
+                callerLineNumber);
 
 #pragma warning restore DF0000 // Marks undisposed anonymous objects from object creations.
 #pragma warning restore DF0001 // Marks undisposed anonymous objects from method invocations.
-
         // ReSharper restore ExplicitCallerInfoArgument
 
         /// <summary>
@@ -214,7 +391,9 @@ namespace WebApplications.HttpRecorder
         /// <param name="getResponseAsync">The function to call if a recording is needed.</param>
         /// <param name="options">The options.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
-        /// <param name="callerMemberName">Name of the caller member.</param>
+        /// <param name="callerFilePath">The caller file path; set automatically.</param>
+        /// <param name="callerMemberName">Name of the caller member; set automatically.</param>
+        /// <param name="callerLineNumber">The caller line number; set automatically.</param>
         /// <returns>
         /// The <see cref="HttpResponseMessage" />.
         /// </returns>
@@ -222,13 +401,14 @@ namespace WebApplications.HttpRecorder
         /// or
         /// request</exception>
         /// <exception cref="ArgumentOutOfRangeException">mode - null</exception>
-        /// <exception cref="NotImplementedException"></exception>
         public async Task<HttpResponseMessage> RecordAsync(
             HttpRequestMessage request,
             GetResponseAsync getResponseAsync,
-            RecordingOptions options = null,
+            CassetteOptions options = null,
             CancellationToken cancellationToken = default(CancellationToken),
-            [CallerMemberName] string callerMemberName = "")
+            [CallerFilePath] string callerFilePath = "",
+            [CallerMemberName] string callerMemberName = "",
+            [CallerLineNumber] int callerLineNumber = 0)
         {
             if (request is null)
                 throw new ArgumentNullException(nameof(request));
@@ -248,71 +428,210 @@ namespace WebApplications.HttpRecorder
             if (!(request.Content is null))
                 await request.Content.LoadIntoBufferAsync().ConfigureAwait(false);
 
-            // Serialize the request data in full, using the full key generator
-            byte[] requestData = FullRequestKeyGenerator.Instance.Generate(request);
+            // Get key data.
+            byte[] key = KeyGenerator.Generate(request);
 
-            // Get key data, if we're not using the full request data for a key.
-            byte[] key = ReferenceEquals(FullRequestKeyGenerator.Instance, KeyGenerator)
-                ? requestData
-                : KeyGenerator.Generate(request);
-
-            // Get key hash.
+            // Get key data hash.
             string hash = key.GetKeyHash();
 
-            // TODO Find existing recording on cassette if any.
-            Recording recording = null;
-
-            // Should we record or playback?
-            bool record;
-            switch (options.Mode)
+            // Get lock for hash.
+            using (await _keyedSemaphoreSlim.WaitAsync(hash, cancellationToken))
             {
-                case RecordMode.Auto:
-                    if (!(recording is null))
-                        return recording.GetResponse();
-                    break;
+                // Try to get recording from the store.
+                byte[] responseData = null;
+                bool found = false;
 
-                case RecordMode.Playback:
-                    if (recording is null)
-                        throw new RecorderException(
-                            $"No matching recording was found for the request.{Environment.NewLine}{request}");
-                    return recording.GetResponse();
+                // Unless we're in overwrite mode, try to get a response from the store.
+                if (mode != RecordMode.Overwrite)
+                {
+                    try
+                    {
+                        responseData = await Store.GetAsync(hash, cancellationToken);
+                    }
+                    catch (Exception e)
+                    {
+                        CassetteException re = new CassetteException(
+                            "The underlying store threw an exception when attempting to retrieve a recording.",
+                            Store.Name,
+                            callerFilePath,
+                            callerMemberName,
+                            callerLineNumber,
+                            e);
+                        Logger.LogError(re);
+                        throw re;
+                    }
 
-                // Record
-                case RecordMode.Record:
-                case RecordMode.Overwrite:
-                    break;
+                    found = !(responseData is null);
+                    if (found && responseData.Length < 1)
+                    {
+                        found = false;
+                        responseData = null;
+                    }
+                }
 
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(options), options.Mode,
-                        "The specified mode is not valid!");
-            }
+                HttpResponseMessage response;
+                switch (mode)
+                {
+                    case RecordMode.Playback:
+                    case RecordMode.Auto:
+                        if (found)
+                        {
+                            Logger.LogInformation(
+                                "Responding with matching recording.",
+                                Store.Name,
+                                callerFilePath,
+                                callerMemberName,
+                                callerLineNumber);
 
-            // We need to actually perform the request
-            HttpResponseMessage response = await getResponseAsync(request, cancellationToken).ConfigureAwait(false);
+                            try
+                            {
+                                response = MessagePackSerializer.Deserialize<HttpResponseMessage>(responseData,
+                                    RecorderResolver.Instance);
+                                // Set the request
+                                response.RequestMessage = request;
+                                return response;
+                            }
+                            catch (Exception e)
+                            {
+                                CassetteException re = new CassetteException(
+                                    "Failed to deserialize retrieved recording.",
+                                    Store.Name,
+                                    callerFilePath,
+                                    callerMemberName,
+                                    callerLineNumber,
+                                    e);
+                                Logger.LogError(re);
 
-            // If we have a recording and we're in record mode, don't overwrite just return the new response here.
-            if (mode == RecordMode.Record && !(recording is null))
+                                // Fall-through to allow new recording
+                                found = false;
+                            }
+                        }
+
+                        if (mode == RecordMode.Playback)
+                        {
+                            // Recording not found so error in playback mode.
+                            CassetteNotFoundException exception = new CassetteNotFoundException(
+                                Store.Name,
+                                callerFilePath,
+                                callerMemberName,
+                                callerLineNumber);
+                            Logger.LogError(exception);
+                            throw exception;
+                        }
+
+                        break;
+
+                    case RecordMode.Overwrite:
+                        break;
+
+                    case RecordMode.Record:
+                        break;
+
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(options), mode,
+                            "The specified mode is not valid!");
+                }
+
+                // We're now ready to get the response.
+                try
+                {
+                    response = await getResponseAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    // TODO We could save the exception an repeat on playback, useful for testing handlers
+                    // At same time we should serialize extra info like execution duration, and key generator name.
+                    CassetteException re = new CassetteException("Fatal error occured retrieving the response.",
+                        Store.Name,
+                        callerFilePath,
+                        callerMemberName,
+                        callerLineNumber,
+                        e);
+                    Logger.LogError(re);
+                    throw re;
+                }
+
+                // If we have a recording, don't overwrite just return the new response here.
+                if (found)
+                {
+                    Logger.LogInformation(
+                        "Existing recording found.",
+                        Store.Name,
+                        callerFilePath,
+                        callerMemberName,
+                        callerLineNumber);
+                    return response;
+                }
+
+                // Serialize new response
+                try
+                {
+                    responseData = MessagePackSerializer.Serialize(response, RecorderResolver.Instance);
+                }
+                catch (Exception e)
+                {
+                    CassetteException re = new CassetteException(
+                        "Failed to serialize HttpResponse.",
+                        Store.Name,
+                        callerFilePath,
+                        callerMemberName,
+                        callerLineNumber,
+                        e);
+                    Logger.LogError(re);
+                    return response;
+                }
+
+                // Set the response
+                Logger.LogInformation(
+                    "Recording response.",
+                    Store.Name,
+                    callerFilePath,
+                    callerMemberName,
+                    callerLineNumber);
+
+                if (options.WaitForSave == true)
+                    try
+                    {
+                        await Store.StoreAsync(hash, responseData);
+                    }
+                    catch (Exception e)
+                    {
+                        // Just log the error.
+                        CassetteException re = new CassetteException(
+                            "Failed to store response.",
+                            Store.Name,
+                            callerFilePath,
+                            callerMemberName,
+                            callerLineNumber,
+                            e);
+                        Logger.LogError(re);
+                    }
+                else
+                    Store.StoreAsync(hash, responseData)
+                        .FireAndForget(e =>
+                        {
+                            // Just log the error.
+                            CassetteException re = new CassetteException(
+                                "Failed to store response.",
+                                Store.Name,
+                                callerFilePath,
+                                callerMemberName,
+                                callerLineNumber,
+                                e);
+                            Logger.LogError(re);
+                        });
+
+                // Return the response.
                 return response;
-
-            if (recording is null)
-            {
-                // TODO create new recording
             }
-            else
-            {
-                // TODO update recording
-            }
-
-            // TODO Save recording
-
-            return response;
         }
 
         /// <inheritdoc />
         public void Dispose()
         {
-            // TODO Flush
-            //throw new NotImplementedException();
+            _keyedSemaphoreSlim.Dispose();
+            if (_disposeStore)
+                Store.Dispose();
         }
     }
 }

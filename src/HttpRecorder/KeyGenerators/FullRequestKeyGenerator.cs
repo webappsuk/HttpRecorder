@@ -29,6 +29,7 @@ namespace WebApplications.HttpRecorder.KeyGenerators
 
         /// <inheritdoc />
         public override byte[] Generate(HttpRequestMessage request)
+            // IMPORTANT: Cassette assumes this key generator uses the full standard serializer!
             => MessagePackSerializer.Serialize(request, RecorderResolver.Instance);
     }
 }

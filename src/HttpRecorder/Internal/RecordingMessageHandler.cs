@@ -11,8 +11,10 @@ namespace WebApplications.HttpRecorder.Internal
     internal class RecordingMessageHandler : DelegatingHandler
     {
         private readonly Cassette _cassette;
-        private readonly RecordingOptions _options;
+        private readonly CassetteOptions _options;
+        private readonly string _callerFilePath;
         private readonly string _callerMemberName;
+        private readonly int _callerLineNumber;
 
         private int _disposeInner;
 
@@ -23,17 +25,23 @@ namespace WebApplications.HttpRecorder.Internal
         /// <param name="cassette">The recorder.</param>
         /// <param name="innerHandler">The inner handler; optional, defaults to creating a new <see cref="HttpClientHandler" />.</param>
         /// <param name="options">The options.</param>
+        /// <param name="callerFilePath">The caller file path.</param>
         /// <param name="callerMemberName">Name of the caller member.</param>
+        /// <param name="callerLineNumber">The caller line number.</param>
         /// <returns></returns>
         public RecordingMessageHandler(
             Cassette cassette,
             HttpMessageHandler innerHandler,
-            RecordingOptions options,
-            string callerMemberName)
+            CassetteOptions options,
+            string callerFilePath,
+            string callerMemberName,
+            int callerLineNumber)
         {
             _cassette = cassette;
             _options = options;
+            _callerFilePath = callerFilePath;
             _callerMemberName = callerMemberName;
+            _callerLineNumber = callerLineNumber;
 
 #pragma warning disable DF0020 // Marks undisposed objects assinged to a field, originated in an object creation.
             if (innerHandler is null)
@@ -53,10 +61,12 @@ namespace WebApplications.HttpRecorder.Internal
         /// <returns>
         /// Returns <see cref="T:System.Threading.Tasks.Task`1" />. The task object representing the asynchronous operation.
         /// </returns>
+        // ReSharper disable ExplicitCallerInfoArgument
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
-            => _cassette.RecordAsync(request, base.SendAsync, _options, cancellationToken, _callerMemberName);
+            => _cassette.RecordAsync(request, base.SendAsync, _options, cancellationToken, _callerFilePath, _callerMemberName, _callerLineNumber);
+        // ReSharper restore ExplicitCallerInfoArgument
 
         /// <summary>
         /// Releases the unmanaged resources used by the <see cref="T:System.Net.Http.DelegatingHandler" />, and optionally disposes of the managed resources.

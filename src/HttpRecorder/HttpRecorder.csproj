@@ -12,4 +12,10 @@
     <PackageReference Include="MessagePack" Version="1.7.3.4" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Reference Include="System.Diagnostics.TraceSource">
+      <HintPath>C:\Program Files\dotnet\sdk\NuGetFallbackFolder\microsoft.netcore.app\2.1.0\ref\netcoreapp2.1\System.Diagnostics.TraceSource.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
 </Project>
