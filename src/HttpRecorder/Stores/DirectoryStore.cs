@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 namespace WebApplications.HttpRecorder.Stores
 {
     /// <summary>
-    /// Stores each data as file in the directory.
+    /// Stores each data as files in the directory.
     /// </summary>
     /// <seealso cref="WebApplications.HttpRecorder.Stores.ICassetteStore" />
     public sealed class DirectoryStore : ICassetteStore
@@ -18,6 +18,8 @@ namespace WebApplications.HttpRecorder.Stores
 
         /// <inheritdoc />
         public string Name { get; }
+
+        // TODO Add Compressed file support...
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DirectoryStore" /> class.

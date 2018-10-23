@@ -512,8 +512,6 @@ namespace WebApplications.HttpRecorder
                                 if (recording.ResponseData is null)
                                     Error("No response data found in recording, ignoring.");
 
-
-
                                 // Deserialize response
                                 if (found)
                                     try
@@ -531,7 +529,7 @@ namespace WebApplications.HttpRecorder
                                 if (found)
                                 {
                                     if (recording.RequestData is null ||
-                                        requestPlaybackMode != RequestPlaybackMode.IgnoreRecorded)
+                                        requestPlaybackMode == RequestPlaybackMode.IgnoreRecorded)
                                     {
                                         if (requestPlaybackMode == RequestPlaybackMode.UseRecorded)
                                             Error(

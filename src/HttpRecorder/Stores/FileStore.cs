@@ -6,6 +6,12 @@ using System.Threading.Tasks;
 
 namespace WebApplications.HttpRecorder.Stores
 {
+    /// <summary>
+    /// Implements a <see cref="ICassetteStore">cassette store</see> that stores all recordings to a single zip archive.
+    /// </summary>
+    /// <seealso cref="WebApplications.HttpRecorder.Stores.ICassetteStore" />
+    /// <remarks>Only one read/write operation can occur at a time so they are serialized (however, the Cassette doesn't hold
+    /// read/write open whilst a request is ongoing).</remarks>
     public sealed class FileStore : ICassetteStore
     {
         /// <summary>

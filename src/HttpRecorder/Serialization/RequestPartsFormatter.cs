@@ -85,12 +85,7 @@ namespace WebApplications.HttpRecorder.Serialization
                         }
                         break;
                     case RequestPart.Content:
-                        // As we're using for key gen we can safely ignore the type
-                        offset += request.Content is null
-                            ? MessagePackBinary.WriteNil(ref bytes, offset)
-                            // Note we always buffer before we serialize, so this should never block.
-                            : MessagePackBinary.WriteBytes(ref bytes, offset,
-                                request.Content.ReadAsByteArrayAsync().Result);
+                        offset += HttpContentFormatter.Serialize(ref bytes, offset, request.Content);
                         break;
                     default:
                         throw new ArgumentOutOfRangeException();

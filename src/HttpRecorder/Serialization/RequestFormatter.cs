@@ -62,12 +62,7 @@ namespace WebApplications.HttpRecorder.Serialization
             }
 
             // RequestPart.Content:
-            // TODO we need to use all the different formatters here so that we can deserialize to more than just byte[]
-            offset += request.Content is null
-                ? MessagePackBinary.WriteNil(ref bytes, offset)
-                // Note we always buffer before we serialize, so this should never block.
-                : MessagePackBinary.WriteBytes(ref bytes, offset,
-                    request.Content.ReadAsByteArrayAsync().Result);
+            offset += HttpContentFormatter.Serialize(ref bytes, offset, request.Content);
             return offset - startOffset;
         }
 
@@ -126,16 +121,15 @@ namespace WebApplications.HttpRecorder.Serialization
                         string headerValue = MessagePackBinary.ReadString(bytes, offset, out readSize);
                         offset += readSize;
 
-                        request.Headers.Add(key, headerValue);
+                        request.Headers.TryAddWithoutValidation(key, headerValue);
                     }
                 }
             }
 
             // RequestPart.Content:
-            // TODO Deserialize to correct type
-#pragma warning disable DF0022 // Marks undisposed objects assinged to a property, originated in an object creation.
-            request.Content = new ByteArrayContent(MessagePackBinary.ReadBytes(bytes, offset, out readSize));
-#pragma warning restore DF0022 // Marks undisposed objects assinged to a property, originated in an object creation.
+#pragma warning disable DF0023 // Marks undisposed objects assinged to a property, originated from a method invocation.
+            request.Content = HttpContentFormatter.Deserialize(bytes, offset, out readSize);
+#pragma warning restore DF0023 // Marks undisposed objects assinged to a property, originated from a method invocation.
 
             offset += readSize;
 

@@ -60,15 +60,10 @@ namespace WebApplications.HttpRecorder.Serialization
                     offset += MessagePackBinary.WriteString(ref bytes, offset, v);
             }
 
-            // NOTE we don't serialize the request, as we substitute with the supplied one in the cassette.
+            // NOTE we don't serialize the request, as we substitute with the supplied one in the Recording.
 
             // Content
-            // TODO we need to use all the different formatters here so that we can deserialize to more than just byte[]
-            offset += response.Content is null
-                ? MessagePackBinary.WriteNil(ref bytes, offset)
-                // Note we always buffer before we serialize, so this should never block.
-                : MessagePackBinary.WriteBytes(ref bytes, offset,
-                    response.Content.ReadAsByteArrayAsync().Result);
+            offset += HttpContentFormatter.Serialize(ref bytes, offset, response.Content);
 
             return offset - startOffset;
         }
@@ -109,7 +104,7 @@ namespace WebApplications.HttpRecorder.Serialization
                 ReasonPhrase = reasonPhrase
             };
 
-            // RequestPart.Headers:
+            // Headers
             int headersCount = MessagePackBinary.ReadMapHeader(bytes, offset, out readSize);
             offset += readSize;
 
@@ -130,17 +125,15 @@ namespace WebApplications.HttpRecorder.Serialization
                         string headerValue = MessagePackBinary.ReadString(bytes, offset, out readSize);
                         offset += readSize;
 
-                        response.Headers.Add(key, headerValue);
+                        response.Headers.TryAddWithoutValidation(key, headerValue);
                     }
                 }
             }
 
-            // Content:
-            // TODO Deserialize to correct type
-#pragma warning disable DF0022 // Marks undisposed objects assinged to a property, originated in an object creation.
-            response.Content = new ByteArrayContent(MessagePackBinary.ReadBytes(bytes, offset, out readSize));
-#pragma warning restore DF0022 // Marks undisposed objects assinged to a property, originated in an object creation.
-
+            // Content
+#pragma warning disable DF0023 // Marks undisposed objects assinged to a property, originated from a method invocation.
+            response.Content = HttpContentFormatter.Deserialize(bytes, offset, out readSize);
+#pragma warning restore DF0023 // Marks undisposed objects assinged to a property, originated from a method invocation.
 
             readSize = offset - startOffset;
             return response;

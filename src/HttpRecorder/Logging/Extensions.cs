@@ -25,7 +25,7 @@ namespace WebApplications.HttpRecorder.Logging
             int callerLineNumber,
             Exception exception = null) =>
             logger?.Log(LogLevel.Information,
-                $"{message} Store '{store}' for '{callerMemberName}' in {callerFilePath}:line {callerLineNumber}", exception);
+                $"{message} Store '{store}' for '{callerMemberName}' at {callerFilePath}:line {callerLineNumber}", exception);
 
         /// <summary>
         /// Logs the error.

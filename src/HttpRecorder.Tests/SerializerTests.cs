@@ -1,10 +1,7 @@
-using MessagePack;
-using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
-using WebApplications.HttpRecorder.Serialization;
-using WebApplications.HttpRecorder.Stores;
+using WebApplications.HttpRecorder.Tests.Helpers;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -20,103 +17,83 @@ namespace WebApplications.HttpRecorder.Tests
         }
 
         [Fact]
-        public void EncodeAll()
+        public async Task TestPostStringContent()
         {
-            string hash;
-            byte[] data;
-            using (HttpRequestMessage request =
-                new HttpRequestMessage(HttpMethod.Get, "https://u:p@localhost:1234/a/b/c?a=1"))
+            const string testString = "Test String";
+
+            using (TestMemoryStore store = new TestMemoryStore())
+            using (Cassette cassette = new Cassette(
+                store,
+                CassetteOptions.RecordedRequests & CassetteOptions.UseRecordedRequest,
+                logger: new OutputRecorderLogger(_output)))
+            using (TestHttpMessageHandler testHandler = new TestHttpMessageHandler(_output))
             {
-                using (ByteArrayContent content = new ByteArrayContent(new byte[] { 1, 2, 3, 4 }))
+                HttpRequestMessage request;
+                StringContent content;
+                HttpResponseMessage response;
+                using (HttpMessageHandler handler =
+                    cassette.GetHttpMessageHandler(testHandler, CassetteOptions.Overwrite))
+                using (HttpClient client = new HttpClient(handler))
+                using (request = new HttpRequestMessage(HttpMethod.Post, "https://test.handler/"))
+                using (content = new StringContent(testString,
+                    // Attempt non-standard encoding (web normally uses UTF-8)
+                    Encoding.Unicode))
                 {
                     request.Content = content;
-                    request.Headers.Add("Test", "a");
-                    request.Headers.Add("test", "b");
 
-                    // Serialize data
-                    data = MessagePackSerializer.Serialize(request, RecorderResolver.Instance);
-                }
+                    // Store should not have been accessed yet
+                    Assert.Equal(0, store.GetAsyncCount);
+                    Assert.Equal(0, store.StoreAsyncCount);
 
-
-                // Get the hash key
-                hash = data.GetKeyHash();
-
-                string json = MessagePackSerializer.ToJson(data);
-                _output.WriteLine($"Serialized to {data.Length} bytes (JSON length {json.Length}), Hash: {hash}");
-                _output.WriteLine(json);
-
-
-                using (HttpRequestMessage newRequest =
-                    MessagePackSerializer.Deserialize<HttpRequestMessage>(data, RecorderResolver.Instance))
-                {
-                    // Check for that singletons are being used.
-                    Assert.Same(HttpMethod.Get, newRequest.Method);
-                    Assert.Equal(request.RequestUri.ToString(), newRequest.RequestUri.ToString());
-
-                    // Re-serialize
-                    byte[] data2 = MessagePackSerializer.Serialize(newRequest, RecorderResolver.Instance);
-                    Assert.Equal(data, data2);
-                    Assert.Equal(json, MessagePackSerializer.ToJson(data2));
-                }
-            }
-        }
-
-        [Fact]
-        public async Task TestStreams()
-        {
-            using (DirectoryStore store = new DirectoryStore("Recordings"))
-            using (Cassette cassette = new Cassette(
-                //store,
-                logger: new OutputRecorderLogger(_output)))
-            using (HttpMessageHandler handler = cassette.GetHttpMessageHandler())
-            using (HttpClient client = new HttpClient(handler))
-            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://jsonplaceholder.typicode.com/posts"))
-            using (MemoryStream memoryStream = new MemoryStream())
-            {
-                // Write a JSON object to stream.
-                byte[] bodyData = Encoding.UTF8.GetBytes(@"{
-                    title: 'foo',
-                    body: 'bar',
-                    userId: 1
-                    }");
-
-                memoryStream.Write(bodyData);
-
-                long eos = memoryStream.Position;
-
-                // Reset memory stream ready for reading
-                memoryStream.Seek(0, SeekOrigin.Begin);
-
-                // Create a request with a body stream
-                using (StreamContent contentStream = new StreamContent(memoryStream))
-                {
-                    request.Content = contentStream;
-                    Assert.Equal(0, memoryStream.Position);
-                    using (HttpResponseMessage response = await client.SendAsync(request))
+                    using (response = await client.SendAsync(request))
                     {
-                        // We must have moved memory stream to end at this point
-                        Assert.Equal(eos, memoryStream.Position);
+                        // Ensure test handler was called
+                        Assert.Equal(1, testHandler.CallCount);
+                        Assert.NotNull(response.Content);
+                        Assert.IsType<StreamContent>(response.Content);
 
-                        string content = await response.Content.ReadAsStringAsync();
-                        _output.WriteLine(content);
+                        Assert.Equal(testString, await response.Content.ReadAsStringAsync());
+
+                        // As we're in overwrite mode we should not have queries the store.
+                        Assert.Equal(0, store.GetAsyncCount);
+                        Assert.Equal(1, store.StoreAsyncCount);
+
+                        // Should only be on item in store.
+                        Assert.Single(store);
+                    }
+                }
+
+                // This time repeat the post in playback mode, which will error if not recorded properly above
+                using (HttpClient client = cassette.GetClient(CassetteOptions.Playback))
+                using (HttpRequestMessage request2 = new HttpRequestMessage(HttpMethod.Post, "https://test.handler/"))
+                using (StringContent content2 = new StringContent(testString,
+                    // Attempt non-standard encoding (web normally uses UTF-8)
+                    Encoding.Unicode))
+                {
+                    request2.Content = content2;
+                    using (HttpResponseMessage response2 = await client.SendAsync(request2))
+                    {
+                        // Ensure we didn't call message handler
+                        Assert.Equal(1, testHandler.CallCount);
+                        Assert.NotNull(response2.Content);
+                        Assert.IsType<StreamContent>(response2.Content);
+                        Assert.Equal(testString, await response2.Content.ReadAsStringAsync());
+
+                        // Ensure nothing was re-used
+                        Assert.NotSame(request, request2);
+                        Assert.NotSame(request, response2.RequestMessage);
+                        Assert.NotSame(response, response2);
+
+                        // One gets but only one set asked of store
+                        Assert.Equal(1, store.GetAsyncCount);
+                        Assert.Equal(1, store.StoreAsyncCount);
+
+
+                        // Should only be on item in store.
+                        Assert.Single(store);
                     }
                 }
             }
-            /*
-            using (Cassette cassette = new Cassette(defaultOptions: CassetteOptions.Default))
-            {
-                using (HttpClient client = cassette.GetClient(
-                    CassetteOptions.Overwrite & CassetteOptions.WaitUntilSaved))
-                {
-
-                }
-                using (HttpClient client = cassette.GetClient(
-                    CassetteOptions.Playback & CassetteOptions.RecordedDelay))
-                {
-
-                }
-            }
-            */
         }
     }
 }

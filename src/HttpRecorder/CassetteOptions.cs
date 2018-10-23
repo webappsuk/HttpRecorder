@@ -66,6 +66,18 @@ namespace WebApplications.HttpRecorder
             new CassetteOptions(requestRecordMode: HttpRecorder.RequestRecordMode.AlwaysRecord);
 
         /// <summary>
+        /// Will record changes made to the request object by the message handler.
+        /// </summary>
+        public static readonly CassetteOptions IgnoreRecordedRequests =
+            new CassetteOptions(requestPlaybackMode: HttpRecorder.RequestPlaybackMode.IgnoreRecorded);
+
+        /// <summary>
+        /// Will record the request.
+        /// </summary>
+        public static readonly CassetteOptions UseRecordedRequest =
+            new CassetteOptions(requestPlaybackMode: HttpRecorder.RequestPlaybackMode.UseRecorded);
+
+        /// <summary>
         /// Gets the mode.
         /// </summary>
         /// <value>
