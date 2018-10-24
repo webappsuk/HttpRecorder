@@ -1,6 +1,13 @@
 # <img src="doc/images/logo.png" width="32" /> HttpRecorder for .Net
 
-[![Join the chat at https://gitter.im/HttpRecorder/Lobby](https://badges.gitter.im/HttpRecorder/Lobby.svg)](https://gitter.im/HttpRecorder/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge) [![Build status](https://ci.appveyor.com/api/projects/status/rhfbut73fjr66j09?svg=true)](https://ci.appveyor.com/project/thargy/httprecorder)
+[![Join the chat at https://gitter.im/HttpRecorder/Lobby](https://badges.gitter.im/HttpRecorder/Lobby.svg)](https://gitter.im/HttpRecorder/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+[![Build status](https://ci.appveyor.com/api/projects/status/rhfbut73fjr66j09?svg=true)](https://ci.appveyor.com/project/thargy/httprecorder) 
+[![License file](https://img.shields.io/github/license/webappsuk/HttpRecorder.svg)](LICENSE.md) 
+![GitHub issues](https://img.shields.io/github/issues/webappsuk/HttpRecorder.svg)
+![GitHub stars](https://img.shields.io/github/stars/webappsuk/HttpRecorder.svg?style=social&label=Stars)
+![Twitter Follow](https://img.shields.io/twitter/follow/webappuk.svg?style=social&label=Follow)
+
+
 
 **_Note: This is a Work In Progress, check back soon for updates_**
 
@@ -197,4 +204,5 @@ This project was inspired by [Scotch](https://github.com/mleech/scotch) and [VCR
 - Add CI build and test
 - Add Tags to top of README for NuGet and CI Build
 - See https://www.inheritdoc.io/ for `<inheritdoc />` support.
+- Add more badges from https://shields.io
 - For example's use [JSONPlaceHolder](https://github.com/typicode/jsonplaceholder).
