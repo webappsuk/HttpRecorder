@@ -1,15 +1,28 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netstandard1.6</TargetFramework>
     <Company>Web Applications UK Limited</Company>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
-    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <RootNamespace>WebApplications.HttpRecorder</RootNamespace>
+    <Version>1.0.0</Version>
+    <Description>A flexible .Net Standard 1.6 recorder allowing for the robust recording and replay of Http transactions.</Description>
+    <Copyright>Copyright © 2018, Web Applications UK Ltd All rights reserved.</Copyright>
+    <PackageLicenseUrl>https://github.com/webappsuk/HttpRecorder/blob/master/LICENSE.md</PackageLicenseUrl>
+    <PackageProjectUrl>https://github.com/webappsuk/HttpRecorder</PackageProjectUrl>
+    <PackageIconUrl>https://github.com/webappsuk/HttpRecorder/blob/master/doc/images/logo.png</PackageIconUrl>
+    <RepositoryUrl>https://github.com/webappsuk/HttpRecorder</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>netstandard16</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="MessagePack" Version="1.7.3.4" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.0.0-beta-63127-02">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,15 @@
+version: '0.5.0-beta{build}'
+
+image: Visual Studio 2017
+configuration: Release
+
+before_build:
+- pwsh: dotnet restore
+
+build:
+  verbosity: normal
+
+dotnet_csproj:
+  patch: true
+  file: '**\*.csproj'
+  version: '{version}'
