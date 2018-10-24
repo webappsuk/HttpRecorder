@@ -4,7 +4,7 @@ image: Visual Studio 2017
 configuration: Release
 
 before_build:
-- pwsh: dotnet restore
+- pwsh: dotnet restore .\src\HttpRecorder.sln
 
 build:
   verbosity: normal
