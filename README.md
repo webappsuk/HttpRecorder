@@ -1,5 +1,7 @@
 # <img src="doc/images/logo.png" width="32" /> HttpRecorder for .Net
 
+[![Join the chat at https://gitter.im/HttpRecorder/Lobby](https://badges.gitter.im/HttpRecorder/Lobby.svg)](https://gitter.im/HttpRecorder/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 **_Note: This is a Work In Progress, check back soon for updates_**
 
 **Status:** Build and runs, no NuGet yet, correctly saves and replays response.
