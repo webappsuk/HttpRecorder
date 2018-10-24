@@ -1,6 +1,9 @@
 ﻿using MessagePack;
 using System;
+using System.Collections.Concurrent;
 using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using WebApplications.HttpRecorder.Serialization;
 
 namespace WebApplications.HttpRecorder.KeyGenerators
@@ -8,13 +11,32 @@ namespace WebApplications.HttpRecorder.KeyGenerators
     /// <summary>
     /// Generates keys based on the <see cref="RequestParts"/> enumeration.
     /// </summary>
-    /// <seealso cref="KeyGeneratorBase" />
-    public class RequestPartsKeyGenerator : KeyGeneratorBase
+    /// <seealso cref="KeyGenerator" />
+    public class RequestPartsKeyGenerator : KeyGenerator
     {
+        /// <summary>
+        /// The key generators by enumeration.
+        /// </summary>
+        private static readonly ConcurrentDictionary<RequestParts, RequestPartsKeyGenerator> _keyGenerators = new ConcurrentDictionary<RequestParts, RequestPartsKeyGenerator>();
+
         /// <summary>
         /// The prefix.
         /// </summary>
-        internal const string Prefix = "RP";
+        private static readonly string _prefix = $"{BuiltinPrefix}RP";
+
+        /// <summary>
+        /// Generates a key using all the request.
+        /// </summary>
+        public static readonly RequestPartsKeyGenerator All;
+
+        /// <summary>
+        /// Initializes the <see cref="RequestPartsKeyGenerator"/> class.
+        /// </summary>
+        static RequestPartsKeyGenerator()
+        {
+            All = FullRequestKeyGenerator.Instance;
+            _keyGenerators.GetOrAdd(RequestParts.All, All);
+        }
 
         /// <summary>
         /// The parts to use.
@@ -22,24 +44,16 @@ namespace WebApplications.HttpRecorder.KeyGenerators
         public readonly RequestParts Parts;
 
         /// <summary>
-        /// Creates a <see cref="RequestPartsKeyGenerator"/>.
+        /// Creates a <see cref="RequestPartsKeyGenerator" />.
         /// </summary>
-        /// <param name="name">The name.</param>
+        /// <param name="parts">The parts.</param>
         /// <returns></returns>
         /// <exception cref="ArgumentOutOfRangeException">name</exception>
-        internal static IKeyGenerator Create(string name)
+        internal static KeyGenerator Get(RequestParts parts)
         {
-            string shortStr = name.Substring(3);
-            RequestParts parts;
-            if (!ushort.TryParse(shortStr, out ushort s) ||
-                (parts = (RequestParts)s) > RequestParts.All)
-                throw new ArgumentOutOfRangeException(nameof(name), name.Length,
-                    $"The built-in name {name} doesn't map to the {nameof(RequestParts)} enum.");
-
-            // Always map default to all to ensure we have some bits set.
-            return parts == RequestParts.Default || parts == RequestParts.All
-                ? FullRequestKeyGenerator.Instance
-                : new RequestPartsKeyGenerator(parts, name);
+            if (parts == RequestParts.Default)
+                parts = RequestParts.All;
+            return _keyGenerators.GetOrAdd(parts, p => new RequestPartsKeyGenerator(p, $"{_prefix}{(ushort)p}"));
         }
 
         /// <summary>
@@ -47,11 +61,18 @@ namespace WebApplications.HttpRecorder.KeyGenerators
         /// </summary>
         /// <param name="parts">The parts.</param>
         /// <param name="name">The name.</param>
-        protected RequestPartsKeyGenerator(RequestParts parts, string name) : base(name)
+        internal RequestPartsKeyGenerator(RequestParts parts, string name) : base(name, true)
             => Parts = parts;
 
         /// <inheritdoc />
-        public override byte[] Generate(HttpRequestMessage request)
-            => MessagePackSerializer.Serialize(request, RecorderResolver.Get(Parts));
+        public override async Task<byte[]> Generate(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            // If we rely on content then ensure the content is fully loaded before serialization.
+            if (Parts.HasFlag(RequestParts.Content) && !(request.Content is null))
+                await request.Content.LoadIntoBufferAsync();
+
+            // IMPORTANT: Cassette assumes this key generator uses the full standard serializer!
+            return MessagePackSerializer.Serialize(request, RecorderResolver.Get(Parts));
+        }
     }
 }

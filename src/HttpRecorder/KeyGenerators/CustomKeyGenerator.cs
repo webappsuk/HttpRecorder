@@ -1,15 +1,17 @@
 ﻿using System;
 using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace WebApplications.HttpRecorder.KeyGenerators
 {
-    public delegate byte[] GenerateDelegate(HttpRequestMessage request);
+    public delegate Task<byte[]> GenerateDelegate(HttpRequestMessage request, CancellationToken cancellationToken = default(CancellationToken));
 
     /// <summary>
     /// Allows for creation of <see cref="IKeyGenerator"/> using a <see cref="GenerateDelegate">delegate</see>.
     /// </summary>
-    /// <seealso cref="WebApplications.HttpRecorder.KeyGenerators.KeyGeneratorBase" />
-    public class CustomKeyGenerator : KeyGeneratorBase
+    /// <seealso cref="KeyGenerator" />
+    public class CustomKeyGenerator : KeyGenerator
     {
         /// <summary>
         /// The delegate.
@@ -26,6 +28,7 @@ namespace WebApplications.HttpRecorder.KeyGenerators
             => _delegate = generator ?? throw new ArgumentOutOfRangeException(nameof(generator));
 
         /// <inheritdoc />
-        public override byte[] Generate(HttpRequestMessage request) => _delegate(request);
+        public override Task<byte[]> Generate(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            _delegate(request, cancellationToken);
     }
 }

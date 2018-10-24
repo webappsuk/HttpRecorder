@@ -1,5 +1,7 @@
 ﻿using MessagePack;
 using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using WebApplications.HttpRecorder.Serialization;
 
 namespace WebApplications.HttpRecorder.KeyGenerators
@@ -8,28 +10,34 @@ namespace WebApplications.HttpRecorder.KeyGenerators
     /// Uses all of the request for key generation.
     /// </summary>
     /// <seealso cref="WebApplications.HttpRecorder.KeyGenerators.RequestPartsKeyGenerator" />
-    public sealed class FullRequestKeyGenerator : RequestPartsKeyGenerator
+    internal sealed class FullRequestKeyGenerator : RequestPartsKeyGenerator
     {
         /// <summary>
         /// The prefix.
         /// </summary>
-        internal new const string Prefix = "FL";
+        private static readonly string _prefix = $"{BuiltinPrefix}FL";
 
         /// <summary>
         /// The singleton.
         /// </summary>
-        public static readonly IKeyGenerator Instance = new FullRequestKeyGenerator();
+        public static readonly FullRequestKeyGenerator Instance = new FullRequestKeyGenerator();
 
         /// <summary>
         /// Prevents a default instance of the <see cref="FullRequestKeyGenerator"/> class from being created.
         /// </summary>
-        private FullRequestKeyGenerator() : base(RequestParts.All, $"{KeyGeneratorResolver.BuiltinPrefixChar}{Prefix}")
+        private FullRequestKeyGenerator() : base(RequestParts.All, _prefix)
         {
         }
 
         /// <inheritdoc />
-        public override byte[] Generate(HttpRequestMessage request)
+        public override async Task<byte[]> Generate(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            // Ensure the content is fully loaded before serialization.
+            if (!(request.Content is null))
+                await request.Content.LoadIntoBufferAsync();
+
             // IMPORTANT: Cassette assumes this key generator uses the full standard serializer!
-            => MessagePackSerializer.Serialize(request, RecorderResolver.Instance);
+            return MessagePackSerializer.Serialize(request, RecorderResolver.Instance);
+        }
     }
 }

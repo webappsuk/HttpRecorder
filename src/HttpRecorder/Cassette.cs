@@ -42,27 +42,6 @@ namespace WebApplications.HttpRecorder
         private readonly bool _disposeStore;
 
         /// <summary>
-        /// The current key generator resolver.
-        /// </summary>
-        private static IKeyGeneratorResolver _resolver = KeyGeneratorResolver.Instance;
-
-        /// <summary>
-        /// Gets or sets the key generator resolver.
-        /// </summary>
-        /// <value>
-        /// The key generator.
-        /// </value>
-        public static IKeyGeneratorResolver Resolver
-        {
-            get => _resolver;
-            set
-            {
-                if (value is null) value = KeyGeneratorResolver.Instance;
-                _resolver = value;
-            }
-        }
-
-        /// <summary>
         /// The keyed semaphore slim allows locking based on request hash.
         /// </summary>
         private readonly KeyedSemaphoreSlim _keyedSemaphoreSlim = new KeyedSemaphoreSlim();
@@ -89,7 +68,7 @@ namespace WebApplications.HttpRecorder
         /// <value>
         /// The key generator.
         /// </value>
-        public IKeyGenerator KeyGenerator { get; }
+        public KeyGenerator KeyGenerator { get; }
 
         /// <summary>
         /// Gets the logger.
@@ -117,7 +96,7 @@ namespace WebApplications.HttpRecorder
         /// <param name="callerFilePath">The caller name; set automatically, leave as <see langword="null" />.</param>
         public Cassette(
             CassetteOptions defaultOptions = null,
-            IKeyGenerator keyGenerator = null,
+            KeyGenerator keyGenerator = null,
             IRecorderLogger logger = null,
             [CallerFilePath] string callerFilePath = "")
             : this(
@@ -143,7 +122,7 @@ namespace WebApplications.HttpRecorder
         public Cassette(
             string filePath,
             CassetteOptions defaultOptions = null,
-            IKeyGenerator keyGenerator = null,
+            KeyGenerator keyGenerator = null,
             IRecorderLogger logger = null)
             : this(
 #pragma warning disable DF0000 // Marks undisposed anonymous objects from object creations.
@@ -168,15 +147,14 @@ namespace WebApplications.HttpRecorder
         public Cassette(
             ICassetteStore store,
             CassetteOptions defaultOptions = null,
-            IKeyGenerator keyGenerator = null,
+            KeyGenerator keyGenerator = null,
             IRecorderLogger logger = null,
             bool disposeStore = false)
         {
             Store = store ?? throw new ArgumentNullException(nameof(store));
             // Overwrite default options, preventing the Mode from ever being CassetteOptions.Default
             DefaultOptions = CassetteOptions.Default & defaultOptions;
-            if (keyGenerator is null) keyGenerator = Resolver.Default;
-            KeyGenerator = keyGenerator;
+            KeyGenerator = keyGenerator ?? FullRequestKeyGenerator.Instance;
             Logger = logger;
             _disposeStore = disposeStore;
         }
@@ -424,7 +402,7 @@ namespace WebApplications.HttpRecorder
                 await request.Content.LoadIntoBufferAsync().ConfigureAwait(false);
 
             // Get key data.
-            byte[] key = KeyGenerator.Generate(request);
+            byte[] key = await KeyGenerator.Generate(request, cancellationToken);
 
             // Get key data hash.
             string hash = key.GetKeyHash();
